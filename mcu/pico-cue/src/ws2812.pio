@@ -1,0 +1,58 @@
+;
+; Intent: WS2812B bit-banger for the WuKong 2040's two onboard LEDs (GP22).
+; Context: RFC 0006 Phase C. The WS2812 protocol encodes each bit as a
+;          fixed-period pulse whose HIGH time carries the value, with a
+;          ~1.25 us period and sub-100 ns tolerance. Bit-banging that from
+;          the CPU would need interrupts disabled for the whole 48-bit
+;          frame, which on this board means stalling BTstack's radio work
+;          mid-ride. PIO drives it from dedicated state-machine hardware
+;          instead, so the LED costs the CPU one FIFO write per pixel.
+;
+; Provenance: the canonical ws2812 program from raspberrypi/pico-examples
+;             (BSD-3-Clause, Copyright (c) 2020 Raspberry Pi (Trading) Ltd),
+;             unmodified. Vendored rather than referenced because the SDK
+;             ships examples separately from the SDK itself, and this build
+;             pins only the SDK.
+;
+; NOTE: cue_actuator.c runs this on PIO1. PIO0 belongs to the CYW43 driver
+;       on a Pico W — claiming a state machine there works until the radio
+;       initialises and then fails in a way that looks like a BLE bug.
+;
+
+.program ws2812
+.side_set 1
+
+.define public T1 2
+.define public T2 5
+.define public T3 3
+
+.wrap_target
+bitloop:
+    out x, 1        side 0 [T3 - 1] ; side-set still takes place when instruction stalls
+    jmp !x do_zero  side 1 [T1 - 1] ; branch on the bit we shifted out, positive pulse
+do_one:
+    jmp  bitloop    side 1 [T2 - 1] ; continue driving high, for a long pulse
+do_zero:
+    nop             side 0 [T2 - 1] ; or drive low, for a short pulse
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void ws2812_program_init(PIO pio, uint sm, uint offset, uint pin,
+                                       float freq) {
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_sm_config c = ws2812_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, pin);
+    /* Shift OUT from the MSB, autopull at 24 bits: one GRB pixel per
+     * FIFO word, left-justified (see cue_actuator.c's pixel packing). */
+    sm_config_set_out_shift(&c, false, true, 24);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    int cycles_per_bit = ws2812_T1 + ws2812_T2 + ws2812_T3;
+    float div = (float)clock_get_hz(clk_sys) / (freq * (float)cycles_per_bit);
+    sm_config_set_clkdiv(&c, div);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

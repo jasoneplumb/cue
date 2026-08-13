@@ -1,0 +1,317 @@
+// Intent: Phone-side personal-route-memory store (RFC 0002 D1/D2/D7): the
+//         per-segment record of review/marker history, its derivation into
+//         the kernel's UNSAFE/SUPPRESS/NEUTRAL decision, and the fixed-size
+//         eviction bound. The canonical store lives here, phone-side — the
+//         kernel receives only the single resolved PersonalMemory record
+//         RideEngine builds per step (RFC 0002 D5).
+// Privacy: Counts and a bonus byte per segment, nothing else (NFR-005) —
+//          no timestamps, no coordinates. Persisted to a caller-supplied
+//          directory (the app passes Application Support), same convention
+//          as SegmentStore.
+// Pattern: markUnsafe/derivation logic is a pure, independently-testable
+//          function of a record (D2); the store itself is the thin
+//          saturating-counter + LRU-eviction wrapper around it (D1/D7).
+import Foundation
+
+/// Mirrors kernel PersonalMemoryState (CUE_MEMORY_*, kernel/cue_policy.h) —
+/// a Swift-side convenience for building the resolved input, not a decision
+/// type in its own right (RFC 0003 D3's "no Swift mirror" concern is about
+/// kernel DECISIONS; this is caller-side input construction, the same as
+/// building a RideSample from GPS fields).
+public enum PersonalMemoryState: UInt8, Sendable {
+    case neutral = 0
+    case unsafe = 1
+    case suppress = 2
+
+    /// Precedence when more than one remembered segment is in play for the
+    /// same step (RFC 0002 D5 "multi-segment resolution"): unsafe > suppress > neutral.
+    var precedence: Int {
+        switch self {
+        case .unsafe: return 2
+        case .suppress: return 1
+        case .neutral: return 0
+        }
+    }
+}
+
+/// The step's resolved personal-route-memory input, ready to cross into the
+/// kernel call (RideEngine converts this to the C PersonalMemory struct).
+public struct ResolvedPersonalMemory: Equatable, Sendable {
+    public let segmentID: UInt32
+    public let state: PersonalMemoryState
+    public let noticeBonusS: UInt8
+}
+
+/// One segment's aggregated history (RFC 0002 D1). Counters saturate at
+/// their max rather than wrapping, matching the kernel's own saturate-
+/// don't-wrap discipline for cooldowns.
+public struct PersonalMemoryRecord: Codable, Equatable, Sendable {
+    public var segmentID: UInt32
+    public var useful: UInt16
+    public var falseAlarm: UInt16
+    public var tooLate: UInt16
+    public var markerCount: UInt16
+    public var noticeBonusS: UInt8
+    /// Monotonic global write counter (not wall-clock — RTC-free, portable
+    /// to a future sensor-pod store) for least-recently-touched eviction.
+    public var lruTouch: UInt32
+}
+
+/// Phone-side per-segment memory store (RFC 0002 D1, D7). Reference type:
+/// one instance is shared by RideSessionController across rides and
+/// injected into each ride's RideEngine, so live cueing benefits from
+/// history recorded on PAST rides, not just the current one.
+public final class PersonalMemoryStore {
+    /// 256 remembered segments, matching RFC 0002 D7's 5 KiB sizing note.
+    public static let segmentsCap = 256
+    /// A single stray false_alarm never suppresses (NFR-001 — conservative).
+    static let falseAlarmMin: UInt16 = 2
+    /// Beyond this, a segment is systematically mis-timed and should be
+    /// escalated to a global CuePolicyConfig change, not widened forever.
+    static let maxTooLateBonusS: UInt8 = 8
+
+    private var recordsBySegment: [UInt32: PersonalMemoryRecord] = [:]
+    private var writeCounter: UInt32 = 0
+    private var _lastEvictedSegmentID: UInt32?
+    /// Total evictions over the store's lifetime — a single before/after
+    /// comparison of `lastEvictedSegmentID` around a BULK insert (e.g.
+    /// importing many custom zones at once) only ever sees the LAST of
+    /// possibly several evictions that batch triggered; comparing this
+    /// count instead lets a caller detect "N evictions happened," not just
+    /// "at least one did" (RFC 0002 D7 — a bound is not a silent truncation).
+    private var _evictionCount: Int = 0
+    /// Guards every property above. Today's real callers (RideSessionController
+    /// is @MainActor) never actually race, but RideEngine/PersonalMemoryStore
+    /// are plain, non-isolated types with no enforced calling convention —
+    /// a lock makes the class correct regardless of caller context, cheaper
+    /// than propagating @MainActor through RideEngine's whole public API
+    /// (and the existing test suite, which calls it synchronously off-actor).
+    private let lock = NSLock()
+
+    /// Segment id evicted by the most recent write that overflowed the cap,
+    /// or nil if none has happened yet — a bound is not a silent
+    /// truncation (RFC 0002 D7); callers may surface this for visibility.
+    /// For a BATCH of writes, prefer diffing `evictionCount` before/after —
+    /// this only ever reflects the single most recent eviction.
+    public var lastEvictedSegmentID: UInt32? {
+        lock.lock(); defer { lock.unlock() }
+        return _lastEvictedSegmentID
+    }
+
+    /// Total evictions over the store's lifetime (monotonically
+    /// increasing). Diff two readings around a batch of writes to count
+    /// how many evictions THAT batch caused.
+    public var evictionCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _evictionCount
+    }
+
+    public init() {}
+
+    /// Restore a previously-saved store (see `save(to:)`).
+    public init(records: [PersonalMemoryRecord]) {
+        for record in records {
+            recordsBySegment[record.segmentID] = record
+            writeCounter = max(writeCounter, record.lruTouch)
+        }
+    }
+
+    public var recordCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return recordsBySegment.count
+    }
+
+    /// D2 derivation: resolves a record to at most one of three states, in
+    /// strict precedence — explicit markers dominate regardless of outcome
+    /// history; else a segment with enough false_alarm evidence (and more
+    /// false_alarm than useful) is suppressed; else neutral. A pure
+    /// function of its input, independently testable without a store.
+    public static func resolve(_ record: PersonalMemoryRecord) -> (state: PersonalMemoryState, noticeBonusS: UInt8) {
+        if record.markerCount > 0 {
+            return (.unsafe, record.noticeBonusS)
+        }
+        if record.falseAlarm >= falseAlarmMin && record.falseAlarm > record.useful {
+            return (.suppress, record.noticeBonusS)
+        }
+        return (.neutral, record.noticeBonusS)
+    }
+
+    /// The resolved input for `segmentID`, or nil if nothing is remembered
+    /// for it (equivalent to a NEUTRAL + 0 record — RideEngine treats both
+    /// the same way).
+    public func resolved(for segmentID: UInt32) -> ResolvedPersonalMemory? {
+        lock.lock(); defer { lock.unlock() }
+        guard segmentID != 0, let record = recordsBySegment[segmentID] else { return nil }
+        let (state, bonus) = Self.resolve(record)
+        return ResolvedPersonalMemory(segmentID: segmentID, state: state, noticeBonusS: bonus)
+    }
+
+    /// Attribute one after-ride review outcome to a segment (RFC 0002 D1:
+    /// the caller joins event_id -> the RouteEvent.segment_id observed for
+    /// it in the ride). `.unrecognized` contributes no counter — it is a
+    /// delivery/attention signal, not a policy-correctness one (D2 Context).
+    /// `.tooEarly` also contributes none: its lever is the global
+    /// max_notice_s ceiling (spec §13), and the record has no counter for
+    /// it — extending D2's evidence model is an RFC decision, not implied
+    /// by the vocabulary.
+    public func recordReview(segmentID: UInt32, outcome: ReviewOutcome) {
+        // Skip touch() entirely, not just the counter — a review that
+        // contributes no evidence must not consume a slot in the
+        // 256-segment cap for zero informational benefit.
+        guard segmentID != 0, outcome != .unrecognized, outcome != .tooEarly
+        else { return }
+        lock.lock(); defer { lock.unlock() }
+        var record = touch(segmentID)
+        switch outcome {
+        case .useful:
+            record.useful = Self.saturatingIncrement(record.useful)
+        case .falseAlarm:
+            record.falseAlarm = Self.saturatingIncrement(record.falseAlarm)
+        case .tooLate:
+            record.tooLate = Self.saturatingIncrement(record.tooLate)
+            // D4: +2 s per too_late review, capped — never silently widened
+            // forever; beyond the cap the fix is a global config change.
+            record.noticeBonusS = min(Self.maxTooLateBonusS, record.noticeBonusS + 2)
+        case .tooEarly, .unrecognized:
+            fatalError("unreachable — filtered by the guard above")
+        }
+        recordsBySegment[segmentID] = record
+    }
+
+    /// Reverse a previously-recorded review outcome's counter contribution
+    /// — used when a rider re-grades the same event (and by the #135
+    /// discard rollback), so the store reflects
+    /// only the LATEST review per event (matching the trace's own one-
+    /// review-per-cue contract) rather than one increment per tap. Does
+    /// not touch lruTouch (undoing isn't fresh evidence) and, for
+    /// too_late, reduces notice_bonus_s by the same +2 — imprecise if the
+    /// bonus had already saturated at the cap from other too_late reviews
+    /// on this segment, an accepted tradeoff since the bonus is a soft
+    /// timing nudge (D4), not the keep/kill state undoReview exists to
+    /// protect the precision of.
+    public func undoReview(segmentID: UInt32, outcome: ReviewOutcome) {
+        guard segmentID != 0, outcome != .unrecognized, outcome != .tooEarly
+        else { return }
+        lock.lock(); defer { lock.unlock() }
+        guard var record = recordsBySegment[segmentID] else { return }
+        switch outcome {
+        case .useful:
+            record.useful = Self.saturatingDecrement(record.useful)
+        case .falseAlarm:
+            record.falseAlarm = Self.saturatingDecrement(record.falseAlarm)
+        case .tooLate:
+            record.tooLate = Self.saturatingDecrement(record.tooLate)
+            record.noticeBonusS = record.noticeBonusS >= 2 ? record.noticeBonusS - 2 : 0
+        case .tooEarly, .unrecognized:
+            fatalError("unreachable — filtered by the guard above")
+        }
+        storePruningIfEmpty(record, for: segmentID)
+    }
+
+    /// Record an explicit "unsafe here" signal for a segment — an in-ride
+    /// marker tap, OR an imported webmap.dev custom zone (same epistemic
+    /// category: the rider is asserting risk, just authored beforehand
+    /// rather than mid-ride). Both land here; D2 does not distinguish them.
+    public func recordUnsafeMarker(segmentID: UInt32) {
+        guard segmentID != 0 else { return }
+        lock.lock(); defer { lock.unlock() }
+        var record = touch(segmentID)
+        record.markerCount = Self.saturatingIncrement(record.markerCount)
+        recordsBySegment[segmentID] = record
+    }
+
+    /// Reverse one previously-recorded "unsafe here" contribution — the
+    /// discard path (#135): a marker made during a ride the rider then
+    /// throws away was part of the ride being discarded, so its evidence
+    /// goes with it. Same undo discipline as undoReview: no lruTouch
+    /// refresh (undoing isn't fresh evidence), saturating decrement.
+    public func undoUnsafeMarker(segmentID: UInt32) {
+        guard segmentID != 0 else { return }
+        lock.lock(); defer { lock.unlock() }
+        guard var record = recordsBySegment[segmentID] else { return }
+        record.markerCount = Self.saturatingDecrement(record.markerCount)
+        storePruningIfEmpty(record, for: segmentID)
+    }
+
+    /// Write back an undo result, removing the record entirely once every
+    /// counter and the bonus are zero: resolved(for:) documents a missing
+    /// record as equivalent to NEUTRAL + 0, and a lingering zeroed record
+    /// would still consume a slot in the 256-segment cap and inflate
+    /// recordCount — a discarded ride must leave the store's counts
+    /// exactly as it found them (#135). Internal helper: callers must
+    /// already hold `lock`.
+    private func storePruningIfEmpty(_ record: PersonalMemoryRecord, for segmentID: UInt32) {
+        if record.useful == 0 && record.falseAlarm == 0 && record.tooLate == 0
+            && record.markerCount == 0 && record.noticeBonusS == 0 {
+            recordsBySegment.removeValue(forKey: segmentID)
+        } else {
+            recordsBySegment[segmentID] = record
+        }
+    }
+
+    private static func saturatingIncrement(_ value: UInt16) -> UInt16 {
+        let (result, overflow) = value.addingReportingOverflow(1)
+        return overflow ? UInt16.max : result
+    }
+
+    private static func saturatingDecrement(_ value: UInt16) -> UInt16 {
+        value > 0 ? value - 1 : 0
+    }
+
+    /// Existing record for `segmentID` with its LRU stamp refreshed, or a
+    /// fresh zeroed one — evicting the least-recently-touched segment first
+    /// if the store is at capacity. Internal helper: callers must already
+    /// hold `lock` (NSLock is not reentrant — locking again here would
+    /// deadlock).
+    private func touch(_ segmentID: UInt32) -> PersonalMemoryRecord {
+        writeCounter += 1
+        if var existing = recordsBySegment[segmentID] {
+            existing.lruTouch = writeCounter
+            return existing
+        }
+        if recordsBySegment.count >= Self.segmentsCap {
+            evictLeastRecentlyTouched()
+        }
+        return PersonalMemoryRecord(segmentID: segmentID, useful: 0, falseAlarm: 0,
+                                    tooLate: 0, markerCount: 0, noticeBonusS: 0,
+                                    lruTouch: writeCounter)
+    }
+
+    /// Internal helper: callers must already hold `lock`.
+    private func evictLeastRecentlyTouched() {
+        guard let oldest = recordsBySegment.values.min(by: { $0.lruTouch < $1.lruTouch }) else { return }
+        recordsBySegment.removeValue(forKey: oldest.segmentID)
+        _lastEvictedSegmentID = oldest.segmentID
+        _evictionCount += 1
+    }
+
+    // MARK: - Persistence
+
+    private static let fileName = "personal-memory.json"
+
+    /// Load a previously-saved store, or an empty one if none exists yet or
+    /// the file cannot be read (corrupt/unavailable storage starts the
+    /// rider fresh rather than failing app launch).
+    public static func load(from directory: URL) -> PersonalMemoryStore {
+        let url = directory.appendingPathComponent(fileName)
+        guard let data = try? Data(contentsOf: url),
+              let records = try? JSONDecoder().decode([PersonalMemoryRecord].self, from: data)
+        else { return PersonalMemoryStore() }
+        return PersonalMemoryStore(records: records)
+    }
+
+    /// Persist every remembered segment, sorted by id for byte-stable
+    /// output (same convention as SegmentStore).
+    public func save(to directory: URL) throws {
+        let sorted: [PersonalMemoryRecord]
+        do {
+            lock.lock(); defer { lock.unlock() }
+            sorted = recordsBySegment.values.sorted { $0.segmentID < $1.segmentID }
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(sorted)
+            .write(to: directory.appendingPathComponent(Self.fileName), options: .atomic)
+    }
+}

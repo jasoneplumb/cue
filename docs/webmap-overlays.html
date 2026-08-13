@@ -1,0 +1,181 @@
+<h1 id="viewing-rides-on-webmap.dev-squeeze-zones-cue-events">Viewing
+rides on webmap.dev — Squeeze zones + Cue events</h1>
+<p>The repo ships two export tools whose GeoJSON output loads directly
+into <a href="https://webmap.dev">webmap.dev</a>’s overlay pair:</p>
+<table>
+<colgroup>
+<col style="width: 18%" />
+<col style="width: 31%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Overlay (webmap.dev)</th>
+<th>Exporter</th>
+<th>Shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Squeeze zones</strong></td>
+<td><code>cue-zone-export</code> (webmap.dev#227)</td>
+<td>Where the imported region <em>would</em> cue — the static zones</td>
+</tr>
+<tr>
+<td><strong>Cue events</strong></td>
+<td><code>cue-events-export</code> (webmap.dev#231)</td>
+<td>What one ride actually <em>did</em> — fired cues, their grades,
+delivery, and rider markers</td>
+</tr>
+</tbody>
+</table>
+<p>Loaded together they close the §13 tuning loop visually: the zones
+say where the policy watches, the events say what happened there.</p>
+<blockquote>
+<p><strong>Privacy first (NFR-005).</strong> Every file below — the
+Overpass extract, the ride trace, the latency sidecar, and both GeoJSON
+exports — reveals where you ride. They all stay on your machine:
+<code>*.geojson</code>, <code>/region.json</code>, and
+<code>/rides/</code> are gitignored, and webmap.dev bundles no data for
+the same reason — you hand it a local file per session, nothing more.
+Never commit any of these; tests use hand-built synthetic fixtures
+only.</p>
+</blockquote>
+<h2 id="get-an-overpass-extract-for-your-ride-region">1. Get an Overpass
+extract for your ride region</h2>
+<p>Both exporters take the same input the app’s “Import region…” picker
+does: an Overpass <code>out geom;</code> JSON response for your riding
+area’s bounding box (south, west, north, east):</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">QUERY</span><span class="op">=</span><span class="st">&#39;[out:json][timeout:60];</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="st">way[&quot;highway&quot;~&quot;^(primary|secondary|tertiary|residential|unclassified|trunk|primary_link|secondary_link|tertiary_link|living_street)$&quot;](SOUTH,WEST,NORTH,EAST);</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="st">out geom;&#39;</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-sS</span> <span class="at">--fail</span> <span class="at">--max-time</span> 90 <span class="at">-X</span> POST <span class="at">--data-urlencode</span> <span class="st">&quot;data=</span><span class="va">$QUERY</span><span class="st">&quot;</span> <span class="dt">\</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  https://overpass-api.de/api/interpreter <span class="op">&gt;</span> region.json</span></code></pre></div>
+<p>The highway-class filter matches <code>rideableHighwayClasses</code>
+in the importer (and <code>tools/osm_tag_audit.sh</code>). The query
+must end in <code>out geom;</code> — a tags-only fetch has no geometry
+to export. If Overpass returns a <code>remark</code> field, the data is
+truncated and both tools refuse it; retry or shrink the bbox. Note the
+bbox itself is disclosed to the public Overpass endpoint — use a box
+comfortably larger than your actual loop.</p>
+<h2 id="squeeze-zones-export-and-view">2. Squeeze zones — export and
+view</h2>
+<p>Export the scored zones through the same importer/scorer the app
+runs:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">swift</span> run cue-zone-export region.json <span class="at">-o</span> squeeze-zones.geojson</span></code></pre></div>
+<p>The summary line reports ways → segments → zones. Then, on
+webmap.dev:</p>
+<ol type="1">
+<li>Open the <strong>layers control</strong> and toggle <strong>Squeeze
+zones</strong> on.</li>
+<li>The overlay prompts with a <strong>file picker</strong> — choose
+<code>squeeze-zones.geojson</code>.</li>
+<li>The choice persists in the browser’s <strong>localStorage</strong>
+for the session pattern webmap.dev uses; re-toggling the overlay
+re-reads your file without re-picking. Clearing site data forgets
+it.</li>
+</ol>
+<p>A malformed or wrong-shape file is rejected at load with an error and
+the overlay stays empty — nothing partial is drawn or persisted.</p>
+<p>Each zone renders as its member segment polylines; features sharing
+an <code>event_id</code> are one logical zone. Popups show severity,
+confidence, and the decoded <code>reasons_bitmask</code> (narrow lane /
+no shoulder or bike lane / high-speed context).</p>
+<h2 id="cue-events-export-and-view">3. Cue events — export and view</h2>
+<p>After a ride, export the trace from the app (and the latency sidecar,
+if you want delivery facts), then join them with the region extract:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">swift</span> run cue-events-export ride-trace.json region.json <span class="dt">\</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--latency</span> ride-latency.json <span class="at">-o</span> cue-events.geojson</span></code></pre></div>
+<ul>
+<li><code>ride-trace.json</code> — the schema-v1 policy trace
+(<code>replay/replay_trace.schema.json</code>).</li>
+<li><code>--latency</code> — optional sidecar from the dispatcher’s
+latency log; without it the <code>delivered</code> /
+<code>latency_ms</code> fields are simply omitted.</li>
+<li>The policy trace carries <strong>no GPS</strong> by design, so each
+event renders at its matched segment’s midpoint, flagged
+<code>approx: true</code> — “somewhere on this segment”, not a fix.</li>
+<li>An event whose <code>segment_id</code> has no match in the extract
+(wrong region, or OSM edits changed the ids since the ride) is
+<strong>skipped with a stderr warning and counted in the
+summary</strong>; pass <code>--strict</code> to fail instead of
+skipping. The summary also reports graded and latency-join counts, so a
+silent mismatch can’t masquerade as a clean export.</li>
+</ul>
+<p>Load it the same way: layers control → <strong>Cue events</strong> →
+file picker.</p>
+<p><strong>Legend</strong> (webmap.dev#231):</p>
+<table>
+<colgroup>
+<col style="width: 39%" />
+<col style="width: 60%" />
+</colgroup>
+<thead>
+<tr>
+<th>Marker</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Green point</td>
+<td><code>outcome: useful</code></td>
+</tr>
+<tr>
+<td>Red point</td>
+<td><code>outcome: false_alarm</code></td>
+</tr>
+<tr>
+<td>Orange point</td>
+<td><code>outcome: too_late</code></td>
+</tr>
+<tr>
+<td>Purple point</td>
+<td><code>outcome: unrecognized</code></td>
+</tr>
+<tr>
+<td>Gray point</td>
+<td>ungraded (no review yet)</td>
+</tr>
+<tr>
+<td><strong>Dashed ring</strong></td>
+<td><code>delivered: false</code> — the cue never reached the wrist</td>
+</tr>
+<tr>
+<td><strong>Triangle</strong></td>
+<td>rider marker (“unsafe here”, FR-006)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="reading-the-two-overlays-together">4. Reading the two overlays
+together</h2>
+<p>Cue-event points sit on the zone that fired them — popups on both
+overlays share <code>event_id</code> and <code>segment_id</code>, so a
+point and its zone cross-reference directly. Patterns worth acting on in
+the §13 loop:</p>
+<ul>
+<li><strong>Red point on a zone</strong> — a false alarm: the zone’s
+evidence (severity/confidence in the zone popup) overstates that road;
+candidate for threshold or scorer tuning.</li>
+<li><strong>Orange point</strong> — cued too late: compare the event’s
+<code>lead_time_s</code> against <code>min_notice_s</code>, and check
+<code>latency_ms</code> — a slow watch delivery eats lead time the
+kernel thinks it gave.</li>
+<li><strong>Purple point</strong> — a cue that fired but you never
+noticed (<code>unrecognized</code>): check <code>delivered</code>/<code>latency_ms</code>
+alongside it — a delivery/perceptibility problem, not a policy one.</li>
+<li><strong>Triangle with no zone under it</strong> — a marker where the
+policy never cued at all: the case for personal route memory (RFC 0002).</li>
+<li><strong>Dashed ring</strong> — the policy fired but the rider felt
+nothing; a delivery problem, not a policy one.</li>
+</ul>
+<h2 id="keeping-it-private">5. Keeping it private</h2>
+<p>One stance, end to end: map data and ride data stay on the operator’s
+machines. The repo’s <code>.gitignore</code> guards
+<code>*.geojson</code>, <code>/region.json</code>, and
+<code>/rides/</code>; webmap.dev holds nothing server-side and bundles
+no data. If you share a screenshot, remember the base map itself shows
+where you ride.</p>

@@ -1,0 +1,32 @@
+{
+  "schema_version": 2,
+  "ride_id": "synthetic-personal-memory-006-too-late-bonus",
+  "started_at": "2026-07-22T17:00:00Z",
+  "policy_config": {
+    "severity_threshold": 128,
+    "confidence_threshold": 128,
+    "min_notice_s": 5,
+    "max_notice_s": 7,
+    "min_cooldown_s": 15,
+    "min_cooldown_m": 75,
+    "min_speed_kmh": 4
+  },
+  "samples": [
+    { "t_ms": 0, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 1000, "speed_cmps": 500, "segment_id": 7 }
+  ],
+  "route_events": [
+    { "t_ms": 0, "event_id": 303, "family": "COMPOSITE_SQUEEZE_ZONE", "segment_id": 7, "severity": 200, "confidence": 220, "reasons_bitmask": 7, "distance_to_start_m": 45, "distance_to_end_m": 165 }
+  ],
+  "personal_memory": [
+    { "t_ms": 0, "segment_id": 7, "state": "NEUTRAL", "notice_bonus_s": 4 },
+    { "t_ms": 1000, "segment_id": 7, "state": "NEUTRAL", "notice_bonus_s": 0 }
+  ],
+  "cue_decisions": [
+    { "t_ms": 0, "type": "HEAD_UP", "event_id": 303, "reason_code": 0, "lead_time_s": 9 }
+  ],
+  "markers": [],
+  "reviews": [
+    { "event_id": 303, "outcome": "too_late", "reviewed_at": "2026-07-22T18:00:00Z" }
+  ]
+}

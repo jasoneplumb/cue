@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "ride_id": "synthetic-near-pass-refund-028",
+  "started_at": "2026-07-13T17:00:00Z",
+  "policy_config": {
+    "severity_threshold": 128,
+    "confidence_threshold": 128,
+    "min_notice_s": 5,
+    "max_notice_s": 15,
+    "min_cooldown_s": 15,
+    "min_cooldown_m": 75,
+    "min_speed_kmh": 4
+  },
+  "samples": [
+    { "t_ms": 0, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 1000, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 2000, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 3000, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 4000, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 5000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 6000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 7000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 8000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 9000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 10000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 11000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 12000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 13000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 14000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 15000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 16000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 17000, "speed_cmps": 500, "segment_id": 9 },
+    { "t_ms": 18000, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 19000, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 20000, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 21000, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 22000, "speed_cmps": 500, "segment_id": 7 },
+    { "t_ms": 23000, "speed_cmps": 500, "segment_id": 7 }
+  ],
+  "route_events": [
+    { "t_ms": 1000, "event_id": 201, "family": "COMPOSITE_SQUEEZE_ZONE", "segment_id": 7, "severity": 200, "confidence": 220, "reasons_bitmask": 7, "distance_to_start_m": 90, "distance_to_end_m": 210 },
+    { "t_ms": 2000, "event_id": 201, "family": "COMPOSITE_SQUEEZE_ZONE", "segment_id": 7, "severity": 200, "confidence": 220, "reasons_bitmask": 7, "distance_to_start_m": 70, "distance_to_end_m": 190 },
+    { "t_ms": 3000, "event_id": 201, "family": "COMPOSITE_SQUEEZE_ZONE", "segment_id": 7, "severity": 200, "confidence": 220, "reasons_bitmask": 7, "distance_to_start_m": 100, "distance_to_end_m": 220 },
+    { "t_ms": 4000, "event_id": 201, "family": "COMPOSITE_SQUEEZE_ZONE", "segment_id": 7, "severity": 200, "confidence": 220, "reasons_bitmask": 7, "distance_to_start_m": 125, "distance_to_end_m": 245 },
+    { "t_ms": 20000, "event_id": 201, "family": "COMPOSITE_SQUEEZE_ZONE", "segment_id": 7, "severity": 200, "confidence": 220, "reasons_bitmask": 7, "distance_to_start_m": 70, "distance_to_end_m": 190 },
+    { "t_ms": 21000, "event_id": 201, "family": "COMPOSITE_SQUEEZE_ZONE", "segment_id": 7, "severity": 200, "confidence": 220, "reasons_bitmask": 7, "distance_to_start_m": 50, "distance_to_end_m": 170 },
+    { "t_ms": 22000, "event_id": 201, "family": "COMPOSITE_SQUEEZE_ZONE", "segment_id": 7, "severity": 200, "confidence": 220, "reasons_bitmask": 7, "distance_to_start_m": 25, "distance_to_end_m": 145 },
+    { "t_ms": 23000, "event_id": 201, "family": "COMPOSITE_SQUEEZE_ZONE", "segment_id": 7, "severity": 200, "confidence": 220, "reasons_bitmask": 7, "distance_to_start_m": 0, "distance_to_end_m": 120 }
+  ],
+  "cue_decisions": [
+    { "t_ms": 1000, "type": "NONE", "event_id": 201, "reason_code": 7, "lead_time_s": 18 },
+    { "t_ms": 2000, "type": "HEAD_UP", "event_id": 201, "reason_code": 0, "lead_time_s": 14 },
+    { "t_ms": 3000, "type": "NONE", "event_id": 201, "reason_code": 7, "lead_time_s": 20 },
+    { "t_ms": 4000, "type": "NONE", "event_id": 201, "reason_code": 7, "lead_time_s": 25 },
+    { "t_ms": 20000, "type": "HEAD_UP", "event_id": 201, "reason_code": 0, "lead_time_s": 14 },
+    { "t_ms": 21000, "type": "NONE", "event_id": 201, "reason_code": 8, "lead_time_s": 10 },
+    { "t_ms": 22000, "type": "NONE", "event_id": 201, "reason_code": 8, "lead_time_s": 5 },
+    { "t_ms": 23000, "type": "NONE", "event_id": 201, "reason_code": 4, "lead_time_s": -1 }
+  ],
+  "markers": [],
+  "reviews": [
+    { "event_id": 201, "outcome": "useful", "reviewed_at": "2026-07-13T18:00:00Z" }
+  ]
+}

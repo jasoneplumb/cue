@@ -1,0 +1,47 @@
+// Cue Ride Service (RFC 0006 D3). Pico W is the peripheral/server; the
+// iPhone is the central. UUIDs are mirrored in mcu/shared/cue_wire.h so
+// the iOS central (Phase B2) shares one source of truth — change both
+// together or the phone will not find the service.
+//
+// DYNAMIC on every characteristic routes reads/writes to the att_server
+// callbacks in cue_ble.c rather than a static value buffer, which is what
+// lets the session state machine see each write.
+
+PRIMARY_SERVICE, GAP_SERVICE
+CHARACTERISTIC, GAP_DEVICE_NAME, READ, "pico-cue"
+
+PRIMARY_SERVICE, GATT_SERVICE
+CHARACTERISTIC, GATT_DATABASE_HASH, READ,
+
+// Cue Ride Service
+PRIMARY_SERVICE, 85BF0001-C87E-4346-8A6C-440B3E57F451
+
+// NOT ENCRYPTED YET — deliberate, tracked, and stated plainly here so
+// nothing downstream reads more security into this file than it has.
+// Adding ENCRYPTION_KEY_SIZE_16 to the three ride characteristics is
+// what actually enforces RFC 0006 D3's encryption intent; as written,
+// BTstack's ATT server accepts these writes over a plaintext link, so a
+// scanner in range could open a session and read back segment-derived
+// data. Persistent bonding (see cue_ble_init) is already in place, which
+// is the prerequisite; enabling the properties is deferred to Phase B3
+// so it can be verified against the iPhone that will actually use it,
+// rather than against a development Mac. Tracked separately.
+
+// CONTROL: session lifecycle (SESSION_START / RESUME / STOP / TEST_CUE).
+// INDICATE rather than NOTIFY — the phone must know its session request
+// was received before it starts streaming steps.
+CHARACTERISTIC, 85BF0002-C87E-4346-8A6C-440B3E57F451, WRITE | INDICATE | DYNAMIC,
+
+// STEP: one kernel step per write. WRITE (with response) gives per-step
+// ordering and an ATT-level ack at the 1 Hz sample cadence; the response
+// also carries the rejection when the session refuses a step.
+CHARACTERISTIC, 85BF0003-C87E-4346-8A6C-440B3E57F451, WRITE | DYNAMIC,
+
+// DECISION: the Pico's CueDecision plus its actuation report, notified
+// after every accepted step — the input to the phone's shadow-divergence
+// check (RFC 0006 D2).
+CHARACTERISTIC, 85BF0004-C87E-4346-8A6C-440B3E57F451, NOTIFY | DYNAMIC,
+
+// STATUS: battery millivolts, firmware version, session state. Readable
+// on demand and notified on change.
+CHARACTERISTIC, 85BF0005-C87E-4346-8A6C-440B3E57F451, READ | NOTIFY | DYNAMIC,

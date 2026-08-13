@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jasoneplumb/cue/replay/replay_trace.schema.json",
+  "title": "ReplayTrace",
+  "description": "Phone/replay interchange format (spec §14, FR-009): one ride's samples, route-event observations, cue decisions, rider markers, and after-ride reviews, plus the policy configuration in force — so the trace replays deterministically through the cue-policy kernel (NFR-003). Field names and integer widths mirror kernel/cue_policy.h.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ride_id",
+    "started_at",
+    "policy_config",
+    "samples",
+    "route_events",
+    "cue_decisions",
+    "markers",
+    "reviews"
+  ],
+  "properties": {
+    "schema_version": {
+      "enum": [1, 2],
+      "description": "Bump on any breaking change; replay tools refuse unknown versions. 2 adds the optional personal_memory[] array (RFC 0002 D6); a v1 trace never carries it and replays identically under either tool version."
+    },
+    "ride_id": { "type": "string", "minLength": 1 },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Wall-clock ride start (UTC). All t_ms values are relative to this."
+    },
+    "policy_config": { "$ref": "#/$defs/CuePolicyConfig" },
+    "samples": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RideSample" },
+      "description": "Ordered by t_ms. The kernel accepts monotonically non-decreasing timestamps, but the replay harness requires strictly increasing t_ms so each observation and recorded decision maps to exactly one sample — producers must collapse or offset duplicate-millisecond samples before export. Per NFR-005, per-sample GPS fields are optional — the kernel needs only t_ms, speed_cmps, and segment_id to reproduce decisions; include lat/lon only for rides captured to inspect GPS jitter or map matching."
+    },
+    "route_events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RouteEventObservation" },
+      "description": "Route-event observations as of a sample timestamp. Distances change as the rider moves, so each observation is stamped with t_ms; replay feeds the kernel the observations whose t_ms matches the current sample, preserving array order (NFR-003)."
+    },
+    "cue_decisions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/CueDecisionRecord" },
+      "description": "Decisions as emitted live. Producers must log every HEAD_UP; logging suppressed (NONE) decisions is optional but aids tuning."
+    },
+    "markers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Marker" },
+      "description": "Explicit rider input during the ride (FR-006)."
+    },
+    "reviews": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Review" },
+      "description": "After-ride outcomes, one per reviewed cue (FR-008)."
+    },
+    "personal_memory": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/PersonalMemoryRecord" },
+      "description": "Optional (schema_version 2+; RFC 0002 D6): the resolved personal-route-memory input the kernel saw, stamped to a sample t_ms. Unlike route_events (exact-match, re-observed every relevant sample), these use CARRY-FORWARD semantics — a record applies from its t_ms (INCLUSIVE, i.e. that same sample's own kernel step already sees it) until the next record's t_ms; producers log one only when the resolved input changes. A ride's LAST sample necessarily has no 'next' record to log a clear into — replaying with whatever memory was actually active for that final sample is correct, and a trace ending with a non-neutral record is expected whenever the ride ends while memory is active, not an error (the harness warns, but does not fail, on this). Producers MUST still log an explicit clear record ({state: NEUTRAL, notice_bonus_s: 0}) whenever memory reverts to neutral at any point BEFORE the ride's last sample, exactly like any other change point — omitting that (as opposed to the unavoidable final-sample case) is the actual truncation hazard this format guards against. Absent or empty means memory-free replay, byte-identical to a trace with no memory feature at all."
+    }
+  },
+  "if": {
+    "required": ["schema_version"],
+    "properties": { "schema_version": { "const": 1 } }
+  },
+  "then": {
+    "properties": {
+      "personal_memory": {
+        "maxItems": 0,
+        "description": "A schema_version 1 trace must never carry personal_memory records (RFC 0002 D6) — replay_main.c enforces this at decode time too, not just here."
+      }
+    }
+  },
+  "$defs": {
+    "uint8": { "type": "integer", "minimum": 0, "maximum": 255 },
+    "uint16": { "type": "integer", "minimum": 0, "maximum": 65535 },
+    "uint32": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "int16": { "type": "integer", "minimum": -32768, "maximum": 32767 },
+    "int32": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+    "CuePolicyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity_threshold",
+        "confidence_threshold",
+        "min_notice_s",
+        "max_notice_s",
+        "min_cooldown_s",
+        "min_cooldown_m",
+        "min_speed_kmh"
+      ],
+      "properties": {
+        "severity_threshold": { "$ref": "#/$defs/uint8" },
+        "confidence_threshold": { "$ref": "#/$defs/uint8" },
+        "min_notice_s": { "$ref": "#/$defs/uint16" },
+        "max_notice_s": { "$ref": "#/$defs/uint16" },
+        "min_cooldown_s": { "$ref": "#/$defs/uint16" },
+        "min_cooldown_m": { "$ref": "#/$defs/uint16" },
+        "min_speed_kmh": { "$ref": "#/$defs/uint16" }
+      }
+    },
+    "RideSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t_ms", "speed_cmps", "segment_id"],
+      "properties": {
+        "t_ms": { "$ref": "#/$defs/uint32" },
+        "lat_e7": {
+          "$ref": "#/$defs/int32",
+          "description": "Optional (NFR-005): the kernel replays from speed alone. Include only when a ride is captured for GPS-jitter / map-matching inspection (spec §16); omit for policy-tuning traces."
+        },
+        "lon_e7": {
+          "$ref": "#/$defs/int32",
+          "description": "Optional (NFR-005): see lat_e7."
+        },
+        "speed_cmps": { "$ref": "#/$defs/uint16" },
+        "heading_deg_x10": {
+          "$ref": "#/$defs/uint16",
+          "description": "Optional (NFR-005): not used by the cue-policy gate."
+        },
+        "segment_id": { "$ref": "#/$defs/uint32" }
+      }
+    },
+    "RouteEventObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t_ms",
+        "event_id",
+        "family",
+        "segment_id",
+        "severity",
+        "confidence",
+        "reasons_bitmask",
+        "distance_to_start_m",
+        "distance_to_end_m"
+      ],
+      "properties": {
+        "t_ms": {
+          "$ref": "#/$defs/uint32",
+          "description": "Sample timestamp this observation belongs to."
+        },
+        "event_id": { "$ref": "#/$defs/uint32" },
+        "family": {
+          "type": "string",
+          "enum": ["COMPOSITE_SQUEEZE_ZONE"],
+          "description": "Event family (spec §7). String in JSON for readability. Numeric mapping to kernel/cue_policy.h: COMPOSITE_SQUEEZE_ZONE = 1 (CUE_EVENT_FAMILY_COMPOSITE_SQUEEZE_ZONE); the replay harness must apply this table (FR-010)."
+        },
+        "segment_id": { "$ref": "#/$defs/uint32" },
+        "severity": { "$ref": "#/$defs/uint8" },
+        "confidence": { "$ref": "#/$defs/uint8" },
+        "reasons_bitmask": {
+          "$ref": "#/$defs/uint16",
+          "description": "Bit 0 narrow_lane, bit 1 no_shoulder_or_bike_lane, bit 2 high_speed_context; bits 3–15 reserved (spec §7)."
+        },
+        "distance_to_start_m": { "$ref": "#/$defs/int16" },
+        "distance_to_end_m": { "$ref": "#/$defs/int16" }
+      }
+    },
+    "CueDecisionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t_ms", "type", "event_id", "reason_code", "lead_time_s"],
+      "properties": {
+        "t_ms": { "$ref": "#/$defs/uint32" },
+        "type": { "type": "string", "enum": ["NONE", "HEAD_UP"] },
+        "event_id": { "$ref": "#/$defs/uint32" },
+        "reason_code": {
+          "$ref": "#/$defs/uint8",
+          "description": "CUE_REASON_CODE_* from kernel/cue_policy.h: 0 cued, 1 no event, 2 severity, 3 confidence, 4 inside event, 5 too slow, 6 too late, 7 too early, 8 already cued, 9 time cooldown, 10 distance cooldown, 11 memory suppressed (RFC 0002 D5 — a CUE_MEMORY_SUPPRESS record applied and severity fell below the raised UINT8_MAX threshold; only possible in a schema_version 2 trace whose personal_memory[] resolves to SUPPRESS for the event's segment)."
+        },
+        "lead_time_s": { "$ref": "#/$defs/int16" }
+      }
+    },
+    "Marker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t_ms", "segment_id", "type"],
+      "properties": {
+        "t_ms": { "$ref": "#/$defs/uint32" },
+        "lat_e7": {
+          "$ref": "#/$defs/int32",
+          "description": "Optional (NFR-005): personal route memory keys on segment_id plus the approach window (spec §9); coordinates are only needed for map visualization or match debugging."
+        },
+        "lon_e7": {
+          "$ref": "#/$defs/int32",
+          "description": "Optional (NFR-005): see lat_e7."
+        },
+        "segment_id": { "$ref": "#/$defs/uint32" },
+        "type": {
+          "type": "string",
+          "enum": ["unsafe_here"],
+          "description": "Binary rider marker (FR-006). Single type in the MVP."
+        }
+      }
+    },
+    "Review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "outcome"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/uint32" },
+        "outcome": {
+          "type": "string",
+          "enum": ["useful", "false_alarm", "too_late", "too_early", "unrecognized"],
+          "description": "After-ride outcome per cue (FR-008)."
+        },
+        "reviewed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Wall-clock time the rider submitted this review (UTC). Optional; anchors reviews when traces are merged and enables time-to-review analysis (spec §13)."
+        }
+      }
+    },
+    "PersonalMemoryRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t_ms", "segment_id", "state", "notice_bonus_s"],
+      "properties": {
+        "t_ms": {
+          "$ref": "#/$defs/uint32",
+          "description": "Sample timestamp this record takes effect (carry-forward semantics — see personal_memory's own description)."
+        },
+        "segment_id": {
+          "$ref": "#/$defs/uint32",
+          "minimum": 1,
+          "description": "0 is reserved (\"no record\", RFC 0002 D5) and must never be a producer's real segment id — enforced here (RFC 0002 follow-up #3) since a real segment mistakenly assigned id 0 would have its memory silently discarded every write. A clear record ({state: NEUTRAL, notice_bonus_s: 0}) still needs a real (nonzero) segment_id; NEUTRAL+0 is memory-free regardless of which segment it names."
+        },
+        "state": {
+          "type": "string",
+          "enum": ["NEUTRAL", "UNSAFE", "SUPPRESS"],
+          "description": "Mirrors kernel PersonalMemoryState (CUE_MEMORY_*, spec §9 / RFC 0002 D2)."
+        },
+        "notice_bonus_s": {
+          "$ref": "#/$defs/uint8",
+          "description": "Additive notice-window bonus (RFC 0002 D4), applied for any state."
+        }
+      }
+    }
+  }
+}

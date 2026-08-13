@@ -1,0 +1,44 @@
+# OS
+.DS_Store
+
+# Clone/agent working dirs
+clones/
+logs/
+
+# Secrets
+.env
+.env.*
+*.key
+*.p8
+
+# Xcode (Phase 1+)
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Build output
+build/
+*.o
+*.out
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# Region extracts and ride exports (NFR-005: bbox/route reveal location —
+# real map data and traces stay on the operator's machines, never in git)
+/region.json
+*.gpx
+
+# Doc exports for external sharing (the .md/.html sources are canonical)
+docs/*.pdf
+
+# Agent worktrees
+.claude/worktrees/
+
+# Field traces pulled from devices (segment ids are reversible to OSM ways
+# with modest effort — ride data stays off git per NFR-005)
+/rides/
+
+# Zone overlay exports (region-revealing — NFR-005)
+*.geojson

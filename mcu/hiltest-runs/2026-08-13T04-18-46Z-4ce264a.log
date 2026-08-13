@@ -1,0 +1,17 @@
+cue on-target portability certificate (RFC 0006 D6)
+date_utc: 2026-08-13T04:18:46Z
+repo_head: 4ce264acf6a53a30b8dbc4147c7905beb8c00209
+board: Raspberry Pi Pico W (RP2040, mcu/pico-cue firmware)
+port: /dev/tty.usbmodem14301
+arm_toolchain: not on PATH at run time
+---
+connected: PONG proto=2 fw=0.1.0 state_size=420
+ok   near_pass_refund.json: 8 sample(s) matched, 0 divergences
+ok   personal_memory_suppress.json: 1 sample(s) matched, 0 divergences
+ok   personal_memory_too_late_bonus.json: 1 sample(s) matched, 0 divergences
+ok   personal_memory_unsafe.json: 1 sample(s) matched, 0 divergences
+ok   squeeze_loop_baseline.json: 9 sample(s) matched, 0 divergences
+ok   squeeze_loop_tuned.json: 9 sample(s) matched, 0 divergences
+ok   config_drift_divergence.json: divergence detected as expected (9 divergence(s) across 9 samples)
+hiltest: all traces certified — pico decisions match the host replay
+result: PASS

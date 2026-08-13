@@ -1,0 +1,19 @@
+# Dependabot version updates. The dependency graph here is deliberately
+# tiny: the Swift package has zero external dependencies (NFR-004), so
+# the real surface is the Actions used by CI and review workflows. The
+# swift ecosystem is registered anyway so any future package dependency
+# is watched from the day it lands.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+  - package-ecosystem: "swift"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"

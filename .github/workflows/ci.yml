@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - mainline
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Kernel — build and test
+        run: make -C kernel test
+
+      - name: Replay — build harness and replay checked-in traces (FR-010)
+        run: make -C replay test
+
+      - name: Replay — trace schema is structurally sound; traces conform
+        run: |
+          python3 -m json.tool replay/replay_trace.schema.json > /dev/null
+          # venv sidesteps PEP 668 when ubuntu-latest rolls to a
+          # system-python that blocks global pip installs.
+          python3 -m venv "$RUNNER_TEMP/schema-venv"
+          "$RUNNER_TEMP/schema-venv/bin/pip" install --quiet jsonschema==4.23.0
+          "$RUNNER_TEMP/schema-venv/bin/python" -c "
+          import glob, json, jsonschema
+          with open('replay/replay_trace.schema.json') as f:
+              schema = json.load(f)
+          jsonschema.Draft202012Validator.check_schema(schema)
+          print('schema structure OK')
+          validator = jsonschema.Draft202012Validator(schema)
+          traces = sorted(glob.glob('replay/traces/*.json')) + \
+                   sorted(glob.glob('replay/tests/*.json'))
+          assert traces, 'no traces found — glob paths drifted?'
+          for path in traces:
+              with open(path) as f:
+                  validator.validate(json.load(f))
+              print(path, 'conforms')
+          "
+
+
+  # CueKernel SPM package: the kernel C target + Swift facade (RFC 0003 D3).
+  # macOS runner because the package needs an Apple Swift toolchain; the
+  # full app build stays a local-Mac gate (simulator platforms are not
+  # reliably preinstalled on hosted runners) — see CLAUDE.md.
+  kernel-package:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: CueKernel — facade tests (swift test)
+        run: swift test
+
+  # pico-cue firmware (RFC 0006 D6): build-only, no hardware — CI runners
+  # have no Pico W attached. Proves kernel/cue_policy.c still cross-builds
+  # cleanly for the Pico W whenever it changes; the on-target replay
+  # certificate (make -C mcu hiltest) stays a manual, hardware-required
+  # gate, never run here.
+  mcu-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Pinned to the same release used to build/verify the firmware
+      # locally (RFC 0006 Phase A2/A3) — bump deliberately, not silently.
+      # The digest is ARM's own published .sha256asc for this archive; it
+      # pins the compiler bit-for-bit, so a re-uploaded tag or a CDN
+      # compromise fails the job instead of silently building with an
+      # unknown toolchain. Update it in the SAME commit as the version.
+      ARM_GNU_TOOLCHAIN: 14.2.rel1
+      ARM_GNU_TOOLCHAIN_SHA256: 62a63b981fe391a9cbad7ef51b17e49aeaa3e7b0d029b36ca1e9c3b2a9b78823
+      PICO_SDK_TAG: "2.3.0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: mcu — replay-port protocol logic (host compiler, no toolchain)
+        run: make -C mcu test
+
+      - name: mcu — install ARM GNU toolchain
+        run: |
+          curl -sL --fail -o /tmp/arm-gnu.tar.xz \
+            "https://developer.arm.com/-/media/Files/downloads/gnu/${ARM_GNU_TOOLCHAIN}/binrel/arm-gnu-toolchain-${ARM_GNU_TOOLCHAIN}-x86_64-arm-none-eabi.tar.xz"
+          echo "${ARM_GNU_TOOLCHAIN_SHA256}  /tmp/arm-gnu.tar.xz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/arm-gnu-toolchain"
+          tar xf /tmp/arm-gnu.tar.xz -C "$RUNNER_TEMP/arm-gnu-toolchain" --strip-components=1
+          echo "$RUNNER_TEMP/arm-gnu-toolchain/bin" >> "$GITHUB_PATH"
+
+      - name: mcu — checkout pico-sdk (pinned)
+        uses: actions/checkout@v7
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: ${{ env.PICO_SDK_TAG }}
+          submodules: false
+          path: pico-sdk
+
+      # Only what the firmware links: tinyusb (USB-CDC replay port),
+      # btstack + cyw43-driver (BLE, RFC 0006 Phase B). Enumerating them
+      # keeps the checkout far smaller than a recursive init.
+      - name: mcu — checkout pico-sdk submodules
+        run: |
+          git -C pico-sdk submodule update --init --depth 1 \
+            lib/tinyusb lib/btstack lib/cyw43-driver
+
+      - name: mcu — cross-build firmware for Pico W
+        env:
+          PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+        run: make -C mcu build

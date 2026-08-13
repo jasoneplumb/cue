@@ -1,0 +1,3 @@
+# Failed runs are renamed *.FAILED.log by the hiltest-archive target and
+# must never be committed as certificates; git add -A cannot stage them.
+*.FAILED.log

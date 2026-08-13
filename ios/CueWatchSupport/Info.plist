@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Merged with the watch target's generated Info.plist (same pattern as
+     ios/CueSupport/Info.plist). workout-processing is what lets the ride
+     workout session keep the app live with the wrist down so cue haptics
+     land (RFC 0003 D4 named the workout session; the extended-runtime
+     types all cap at minutes-to-an-hour and none describe a bike ride).
+     The Health usage strings are required by the HealthKit entitlement
+     the session needs — cue reads nothing and saves nothing. -->
+<dict>
+	<key>WKBackgroundModes</key>
+	<array>
+		<string>workout-processing</string>
+	</array>
+	<key>NSHealthShareUsageDescription</key>
+	<string>cue starts a cycling workout session only to stay responsive for haptic cues during a ride. It reads no health data.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>cue starts a cycling workout session only to stay responsive for haptic cues during a ride. It saves no workouts or health data.</string>
+</dict>
+</plist>
