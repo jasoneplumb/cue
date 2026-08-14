@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a defect in the kernel, replay harness, iOS app, MCU firmware, or tools
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened / what did you expect?
+      description: Describe the observed behavior and the behavior you expected instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options:
+        - kernel
+        - replay
+        - ios
+        - mcu/pico-cue
+        - tools
+        - docs
+    validations:
+      required: true
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Reproduction steps
+      description: Exact commands or actions, in order, that reproduce the problem.
+      placeholder: |
+        1. make -C replay test
+        2. replay/build/replay_cli path/to/trace.json
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: replay-trace
+    attributes:
+      label: Minimal replay trace
+      description: >-
+        A minimal synthetic trace that reproduces the bug, if applicable.
+        Real ride traces contain GPS location history — never attach one;
+        author a minimal synthetic trace instead (see `replay/README.md`
+        `--print` authoring flow, and note fixture samples need no lat/lon
+        fields).
+      render: json
+  - type: textarea
+    id: replay-cli-output
+    attributes:
+      label: replay_cli exit code / output
+      description: >-
+        Exit code (0 = match, 1 = divergence, 2 = malformed trace or usage
+        error) and any stdout, if the bug involves the replay harness.
+      render: shell

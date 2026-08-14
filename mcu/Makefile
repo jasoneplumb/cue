@@ -137,9 +137,22 @@ hiltest:
 # a gate" into "here is the gate passing on <date> at <sha>". Note the
 # header records the repo HEAD at run time; the flashed firmware's own
 # identity is whatever the log body's SESSION_ACK line reports.
+# Which board the certificate names, and which compiler's provenance it
+# records. Defaults are the original Pico W port; override per run for
+# other certified targets, e.g.
+#   make -C mcu hiltest-archive PORT=... \
+#     BOARD="Adafruit ESP32-S2 Feather TFT (ESP32-S2, mcu/esp32s2-cue firmware)" \
+#     TOOLCHAIN=xtensa-esp32s2-elf-gcc
+BOARD ?= Raspberry Pi Pico W (RP2040, mcu/pico-cue firmware)
+TOOLCHAIN ?= arm-none-eabi-gcc
+# Exported so the recipe reads them as shell VARIABLES ($$BOARD) — never
+# spliced into shell text, so a hostile value cannot inject commands.
+export BOARD
+export TOOLCHAIN
+
 hiltest-archive:
 	@if [ -z "$(PORT)" ]; then \
-	  echo "usage: make -C mcu hiltest-archive PORT=/dev/tty.usbmodemXXXX" >&2; \
+	  echo "usage: make -C mcu hiltest-archive PORT=/dev/tty.usbmodemXXXX [BOARD=\"...\"]" >&2; \
 	  exit 2; \
 	fi
 	@mkdir -p hiltest-runs; \
@@ -160,10 +173,10 @@ hiltest-archive:
 	{ echo "cue on-target portability certificate (RFC 0006 D6)"; \
 	  echo "date_utc: $$DATE"; \
 	  echo "repo_head: $$HEADSHA$$DIRTY"; \
-	  echo "board: Raspberry Pi Pico W (RP2040, mcu/pico-cue firmware)"; \
+	  echo "board: $$BOARD"; \
 	  echo "port: $(PORT)"; \
-	  TC=$$(arm-none-eabi-gcc --version 2>/dev/null | head -1); \
-	  echo "arm_toolchain: $${TC:-not on PATH at run time}"; \
+	  TC=$$("$$TOOLCHAIN" --version 2>/dev/null | head -1); \
+	  echo "build_toolchain: $$TOOLCHAIN — $${TC:-not on PATH at run time}"; \
 	  echo "---"; } > $$FLOG; \
 	if $(MAKE) --no-print-directory hiltest PORT=$(PORT) >> $$FLOG 2>&1; then \
 	  echo "result: PASS" >> $$FLOG; \

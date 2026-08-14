@@ -22,6 +22,7 @@ documentation lives inline with the code using intent headers.
 | Document                                                            | Purpose                                                        |
 | ------------------------------------------------------------------- | --------------------------------------------------------------- |
 | [eval-board-migration-matrix.md](eval-board-migration-matrix.md)     | Board-neutral evaluation-board comparison for the Phase 4 MCU migration (spec §13) |
+| [../PORTING.md](../PORTING.md)                                       | Port the kernel to a new MCU/toolchain — footprint budget, tripwires, on-target certification contract |
 | [mcu-replay-demo-readme.md](mcu-replay-demo-readme.md)               | Phase 4+ MCU replay-demo README draft (SAM E54, vendor-example format) |
 | [provisioning.md](provisioning.md)                                   | Device-provisioning runbook (signing, capabilities, region import)     |
 | [design-aspects.md](design-aspects.md)                               | Decision-layer design walkthrough — reasoning, value, tradeoffs        |

@@ -40,8 +40,15 @@ git checkout -b feature/your-feature-name
 
 ### 3. Run Quality Checks
 
-No toolchain is configured yet (Phase 0). When code lands, this section gains
-the real quality gate; until then, note in the PR that no automated gate exists.
+```bash
+make test     # kernel, replay, MCU host tests + the minimal example
+swift test    # CueKernel package facade (macOS host)
+```
+
+CI additionally runs schema validation, ASan/UBSan + a fuzz smoke, and the
+cross-architecture equivalence job. There is no lint/format gate for C,
+Swift, or markdown (`.clang-format` is advisory) — say so in the PR rather
+than claiming a gate that does not exist.
 
 ### 4. Commit Your Changes
 

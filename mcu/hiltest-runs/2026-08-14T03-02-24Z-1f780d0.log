@@ -1,0 +1,17 @@
+cue on-target portability certificate (RFC 0006 D6)
+date_utc: 2026-08-14T03:02:24Z
+repo_head: 1f780d0191a570ccfbe596988bcecb09e4bbbf15
+board: Adafruit ESP32-S2 Feather TFT (ESP32-S2, mcu/esp32s2-cue firmware)
+port: /dev/tty.usbmodem14301
+build_toolchain (xtensa-esp32s2-elf-gcc): xtensa-esp-elf-gcc (crosstool-NG esp-14.2.0_20260121) 14.2.0
+---
+connected: PONG proto=2 fw=0.1.0 state_size=420
+ok   near_pass_refund.json: 8 sample(s) matched, 0 divergences
+ok   personal_memory_suppress.json: 1 sample(s) matched, 0 divergences
+ok   personal_memory_too_late_bonus.json: 1 sample(s) matched, 0 divergences
+ok   personal_memory_unsafe.json: 1 sample(s) matched, 0 divergences
+ok   squeeze_loop_baseline.json: 9 sample(s) matched, 0 divergences
+ok   squeeze_loop_tuned.json: 9 sample(s) matched, 0 divergences
+ok   config_drift_divergence.json: divergence detected as expected (9 divergence(s) across 9 samples)
+hiltest: all traces certified — pico decisions match the host replay
+result: PASS

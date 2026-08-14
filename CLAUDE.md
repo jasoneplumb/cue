@@ -7,13 +7,19 @@ from infobento.com.
 ## Quality Gate
 
 ```bash
-make -C kernel test   # build + run kernel unit tests (-Wall -Wextra -Werror -pedantic)
-make -C replay test   # build replay harness + replay checked-in traces (FR-010)
+make test             # kernel + replay + MCU host tests + minimal example (root Makefile)
 swift test            # CueKernel package facade tests (macOS host)
 xcodebuild -project ios/Cue.xcodeproj -scheme Cue \
   -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO build   # iOS app + embedded watch app (local Mac only)
 ```
+
+Individual gates remain runnable directly (`make -C kernel test`,
+`make -C replay test`, `make -C mcu test`, `make -C examples test`).
+`make demo-corpus` generates the synthetic ride corpus the analysis tools
+(`tools/cue-results`, `tools/cue-ablation`) consume without field data.
+CI additionally runs ASan/UBSan + a fuzz smoke (`sanitize`) and the
+cross-architecture equivalence job (x86-64 / ARM32 / RISC-V, bit-exact).
 
 The `xcodebuild` step needs the iOS and watchOS simulator platforms
 installed in Xcode; CI runs `swift test` only. There is no lint/format gate
@@ -25,9 +31,13 @@ success.
 ```
 cue/
 ├── docs/rfcs/            Architecture decision records (NNNN-title.md)
+├── examples/             Minimal kernel embedding (built + run in CI)
+├── fuzz/                 libFuzzer harness for the trace-JSON tokenizer
 ├── ios/                  iPhone + Watch prototype (Swift): Cue.xcodeproj + CueKernel package sources
 ├── kernel/               Portable C cue-policy kernel + tests
-└── replay/               Replay harness (replay_cli), trace schema, example traces
+├── mcu/                  MCU ports (pico-cue, esp32s2-cue) + on-target certification (hiltest)
+├── replay/               Replay harness (replay_cli), trace schema, example traces
+└── tools/                Desk tools: results aggregator, ablation sweep, demo corpus, exports
 ```
 
 ## Design Constraints (from the design spec)
@@ -45,18 +55,22 @@ cue/
 - Map matching and route-event generation stay phone-side; only normalized
   samples, compact route events, and the kernel migrate to MCU.
 
-## Module Boundaries (planned)
+## Module Boundaries
 
 ```
 kernel (pure C, no deps)  <──  replay (feeds traces through kernel)
         ^
-        └──  ios (executes the same policy live; exports traces)
+        ├──  ios (executes the same policy live; exports traces)
+        └──  mcu (compiles the same kernel by path reference; certified
+             on-target against the replay goldens — hiltest)
 ```
 
 - `kernel` imports nothing; compiles standalone.
 - `replay` depends only on `kernel` and the trace schema.
-- `ios` embeds `kernel` (or mirrors it exactly until embedded) — divergence
-  between live and replay decisions is a bug.
+- `ios` embeds `kernel` — divergence between live and replay decisions is
+  a bug.
+- `mcu` ports never copy kernel sources; they compile the canonical files
+  by path so a port cannot drift from what CI tests.
 
 ## Design Record
 

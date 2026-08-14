@@ -42,3 +42,6 @@ docs/*.pdf
 
 # Zone overlay exports (region-revealing — NFR-005)
 *.geojson
+
+# Generated demo corpus (make demo-corpus) — regenerate, never commit
+/demo-rides/

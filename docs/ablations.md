@@ -5,7 +5,9 @@ re-running the recorded corpus through kernel variants, with zero new riding.
 Reproduce with `python3 tools/cue-ablation/ablate.py` — paths resolve
 against the repo root, so any CWD works (2026-08-12 corpus: 23 traces,
 88.1 km, 57,783 steps, 42 recorded cues; the corpus itself is local field
-data, gitignored per NFR-005).
+data, gitignored per NFR-005). Without it, `make demo-corpus` builds a
+synthetic corpus and `ablate.py demo-rides` runs the same sweep — the
+qualitative findings below reproduce on it.
 
 This is the replay harness used as a research instrument rather than a
 regression suite: the same `--print` evaluation that authors fixtures

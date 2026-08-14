@@ -1,0 +1,12 @@
+# Matches the existing hand-written style of kernel/cue_policy.[ch]:
+# LLVM base, 2-space indent, 80-column limit, right-aligned pointers.
+# Advisory for contributors — there is no CI format gate, and existing
+# files are not to be bulk-reformatted.
+BasedOnStyle: LLVM
+IndentWidth: 2
+ColumnLimit: 80
+PointerAlignment: Right
+# Carefully wrapped comment blocks and long diagnostic strings are
+# load-bearing in the kernel sources; do not repack them.
+ReflowComments: false
+BreakStringLiterals: false

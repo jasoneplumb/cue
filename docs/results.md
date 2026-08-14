@@ -6,7 +6,10 @@ corpus by
 `python3 tools/cue-results/aggregate.py` from the repo root to reproduce it.
 The corpus itself (`rides/`) is field data and stays out of the repo
 (NFR-005 — it is gitignored), so this page is a dated snapshot, and the
-command reproduces it wherever the corpus lives, not on a fresh clone.
+command reproduces it wherever the corpus lives, not on a fresh clone. For
+a corpus a fresh clone *can* reproduce, `make demo-corpus` generates a
+synthetic, coordinate-free ride set that the same tools consume
+(`aggregate.py demo-rides`, `ablate.py demo-rides`).
 Negative results stay on the record: missed coverage is preferable to noisy
 cueing (NFR-001), and the same ethos applies to reporting.
 

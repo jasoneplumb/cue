@@ -45,14 +45,14 @@ decisions bit-exact replayable.
 
 ```
 ┌──────────────────────┐      ┌────────────────┐      ┌───────────────────────┐
-│  iPhone prototype    │─────►│  Apple Watch   │─────►│  MCU migration        │
+│  iPhone prototype    │─────►│  Apple Watch   │─────►│  MCU ports            │
 │  ride logging        │      │  one haptic    │      │  portable cue-policy  │
 │  GPS cleanup / map   │      │  cue           │      │  kernel               │
 │  matching            │      │  marker        │      │  replay trace harness │
-│  squeeze events      │      │  confirmation  │      │  eval-board demo      │
-│  cue-policy exec     │      │  low-          │      │  later: sensor pod    │
-│  after-ride review   │      │  distraction   │      │                       │
-│  replay trace export │      │  output        │      │                       │
+│  squeeze events      │      │  confirmation  │      │  hiltest-certified:   │
+│  cue-policy exec     │      │  low-          │      │  Pico W · ESP32-S2    │
+│  after-ride review   │      │  distraction   │      │  BLE ride link +      │
+│  replay trace export │      │  output        │      │  buzzer cue (RFC 0006)│
 └──────────────────────┘      └────────────────┘      └───────────────────────┘
         Shared spine: normalized samples + route events + cue decisions + reviews
 ```
@@ -61,23 +61,41 @@ Map matching and route-event generation stay phone-side in the first
 architecture. Only normalized samples, compact route events, and the cue-policy
 kernel move toward MCU evaluation boards.
 
+## Quickstart
+
+```bash
+make test          # kernel, replay, MCU host tests + the minimal example
+make demo-corpus   # synthetic, coordinate-free ride corpus → demo-rides/
+python3 tools/cue-results/aggregate.py demo-rides    # the results tables
+python3 tools/cue-ablation/ablate.py  demo-rides     # the ablation sweep
+```
+
+Embedding the kernel is two files — `kernel/cue_policy.h` and
+`kernel/cue_policy.c` (C99, integer-only, no allocation, no OS calls).
+[`examples/minimal`](examples/minimal/main.c) is the whole API in ~40 lines;
+[`PORTING.md`](PORTING.md) covers taking it to an MCU, and
+`kernel/CMakeLists.txt` / `library.json` cover CMake and PlatformIO embeds.
+
 ## Repository Structure
 
 | Path                  | Purpose                                                             |
 | --------------------- | ------------------------------------------------------------------- |
 | `docs/rfcs/`          | Architecture decision records                                        |
+| `examples/`           | Minimal kernel embedding (built + run in CI)                         |
+| `fuzz/`               | libFuzzer harness for the trace-JSON tokenizer                       |
 | `ios/`                | iPhone + Watch prototype: app + watch targets, SPM packages (map import/scoring, matcher, ride engine, watch link) |
 | `kernel/`             | Portable C cue-policy kernel (`cue_policy.h`) + tests                |
+| `mcu/`                | Pico W firmware port + on-target certification (`hiltest`)           |
 | `replay/`             | Replay harness (`replay_cli`) + `replay_trace.schema.json` + example traces (FR-010) |
-| `tools/`              | Desk tools: OSM tag audit, D6 GPX ride simulator                     |
+| `tools/`              | Desk tools: results aggregator, ablation sweep, demo-corpus generator, OSM tag audit, GPX ride simulator |
 
 ## Roadmap
 
 - **Phase 0 — Design record.** Establish the design record (kept in the private working archive); adopt repo conventions. _(done)_
 - **Phase 1 — Vertical slice.** Ride logging, composite squeeze-zone events, cue policy, watch haptic, after-ride review, trace export (FR-001…FR-009). _(code complete — all nine RFC 0003 deliverables merged)_
 - **Phase 2 — Replay loop.** Portable kernel + replay harness reproduce recorded cue decisions deterministically (FR-010, NFR-003). _(done — and verified against the first field trace)_
-- **Phase 3 — Field proof.** Three-ride engineering proof, then ten-ride case study with before/after policy comparison. _(in progress — first instrumented ride captured)_
-- **Phase 4 — MCU migration.** Board-neutral migration matrix _(done)_, evaluation-board demonstration _(README drafted; build pending)_.
+- **Phase 3 — Field proof.** Three-ride engineering proof, then ten-ride case study with before/after policy comparison. _(in progress — 23-trace / 88 km corpus, 13 graded rides; see [docs/results.md](docs/results.md))_
+- **Phase 4 — MCU migration.** Board-neutral migration matrix _(done)_; on-target certification live on two silicon families — Pico W (RP2040) and ESP32-S2 (Xtensa) — with committed pass certificates in `mcu/hiltest-runs/` _(done; further ports tracked as issues)_.
 
 ## Documentation
 
@@ -116,19 +134,20 @@ commercial firmware build inherits BTstack's terms.
 
 ## Status
 
-The Phase 1 vertical slice is code complete: the iPhone app imports a real
-OSM region, scores composite squeeze zones, matches GPS to segments, runs
-the same C kernel live that the replay harness runs offline, dispatches the
-haptic to the watch with measured delivery latency, captures markers by
-voice and watch button, grades cues after the ride, and exports schema-v1
-traces (83 package tests; app + watch build clean).
+The live loop runs end to end: the iPhone app imports a real OSM region,
+scores composite squeeze zones, matches GPS to segments, and runs the same
+C kernel live that `replay_cli` runs offline. Cues deliver via the watch
+haptic and — since RFC 0006 — a Pico W buzzer that executes the kernel
+on-board while the phone shadow-compares every step. Rides export schema-v2
+traces, graded after the ride and fed back into the spec §13 tuning loop.
 
-The first field trace has been captured and **replayed bit-for-bit through
-`replay_cli` — NFR-003 held on real-world data**. Field measurements (cue
-lead time, watch delivery p95) await the first moving ride; two
-field-found gaps (background sampling across screen lock, the watch's
-ride-mode workout session) are fixed. Phase 3 riding is underway; Phase 4
-has a verified board matrix and a drafted demo README.
+Field record so far ([docs/results.md](docs/results.md)): 23 traces,
+88.1 km, 57,783 kernel steps; 11,300 phone↔Pico shadow-compared steps with
+**zero divergences**; 23/23 traces replay bit-exact. The replay harness
+doubles as a research instrument ([docs/ablations.md](docs/ablations.md)).
+The kernel is hiltest-certified on two silicon families — Pico W (RP2040)
+and ESP32-S2 (Xtensa LX7) — with committed pass certificates, and CI proves
+byte-identical decisions across x86-64, ARM32, and RISC-V on every push.
 
 Repo conventions adapted from
 [infobento.com](https://github.com/jasoneplumb/infobento.com).

@@ -1,0 +1,5 @@
+# Adafruit ESP32-S2 Feather TFT: console on the S2's native USB (USB-CDC),
+# so tools/cue-hiltest talks to the same /dev/tty.usbmodem* class of device
+# as the Pico port — `make -C mcu hiltest PORT=...` works unchanged.
+CONFIG_IDF_TARGET="esp32s2"
+CONFIG_ESP_CONSOLE_USB_CDC=y

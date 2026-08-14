@@ -1,0 +1,14 @@
+name: Question
+description: Ask a question about the project
+title: "[question]: "
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: >-
+        What would you like to know? If it concerns the design, check the
+        RFCs and engineering docs under `docs/` first.
+    validations:
+      required: true

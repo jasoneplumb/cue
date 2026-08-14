@@ -24,6 +24,15 @@ jobs:
       - name: Replay — build harness and replay checked-in traces (FR-010)
         run: make -C replay test
 
+      - name: Examples — minimal embed compiles and runs
+        run: make -C examples test
+
+      - name: Demo corpus — generate, then aggregate + ablate on it
+        run: |
+          python3 tools/cue-demo-corpus/generate.py --rides 3
+          python3 tools/cue-results/aggregate.py demo-rides
+          python3 tools/cue-ablation/ablate.py demo-rides
+
       - name: Replay — trace schema is structurally sound; traces conform
         run: |
           python3 -m json.tool replay/replay_trace.schema.json > /dev/null
@@ -39,7 +48,8 @@ jobs:
           print('schema structure OK')
           validator = jsonschema.Draft202012Validator(schema)
           traces = sorted(glob.glob('replay/traces/*.json')) + \
-                   sorted(glob.glob('replay/tests/*.json'))
+                   sorted(glob.glob('replay/tests/*.json')) + \
+                   sorted(glob.glob('demo-rides/*.json'))
           assert traces, 'no traces found — glob paths drifted?'
           for path in traces:
               with open(path) as f:
@@ -47,6 +57,63 @@ jobs:
               print(path, 'conforms')
           "
 
+
+  # Memory-safety gate: the same test suites under ASan/UBSan. The kernel
+  # is integer-only with caller-owned state, so this should be trivially
+  # clean — and then it is an enforced invariant, not an assumption.
+  sanitize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Kernel + replay + examples under ASan/UBSan
+        run: |
+          SAN='-std=c99 -Wall -Wextra -Werror -pedantic -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all'
+          # Leak detection stays ON for kernel and examples — the kernel is
+          # allocation-free by contract (NFR-004), so LSan proves it.
+          make -C kernel   test CC=clang CFLAGS="$SAN"
+          make -C examples test CC=clang CFLAGS="$SAN"
+          # replay_cli is a run-to-exit CLI whose decode buffers deliberately
+          # live for the process lifetime (reclaimed by exit); LSan would
+          # flag those, so leak checking alone is off here — ASan and UBSan
+          # still run in full.
+          ASAN_OPTIONS=detect_leaks=0 make -C replay test CC=clang CFLAGS="$SAN"
+      - name: Fuzz harness — 60 s libFuzzer smoke on the trace tokenizer
+        run: make -C fuzz smoke
+
+  # The equivalence contract, cross-architecture: the same replay_cli built
+  # for x86-64, ARM32, and RISC-V must produce byte-identical --print output
+  # and verify every checked-in trace exit-0. This is NFR-003 continuously
+  # demonstrated across instruction sets, not just claimed.
+  equivalence:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install cross toolchains + qemu-user
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q gcc-arm-linux-gnueabihf gcc-riscv64-linux-gnu qemu-user
+      - name: Build replay_cli for three architectures
+        run: |
+          FLAGS='-std=c99 -Wall -Wextra -Werror -pedantic -O2 -Ireplay -Ikernel'
+          cc $FLAGS -o replay_host  replay/replay_main.c kernel/cue_policy.c
+          arm-linux-gnueabihf-gcc -static $FLAGS -o replay_arm replay/replay_main.c kernel/cue_policy.c
+          riscv64-linux-gnu-gcc  -static $FLAGS -o replay_rv  replay/replay_main.c kernel/cue_policy.c
+      - name: Verify + diff decisions bit-for-bit across architectures
+        run: |
+          for t in replay/traces/*.json; do
+            ./replay_host "$t" > /dev/null
+            qemu-arm ./replay_arm "$t" > /dev/null
+            qemu-riscv64 ./replay_rv "$t" > /dev/null
+            ./replay_host --print "$t" > host.out
+            qemu-arm ./replay_arm --print "$t" > arm.out
+            qemu-riscv64 ./replay_rv --print "$t" > rv.out
+            diff host.out arm.out && diff host.out rv.out
+            echo "bit-exact across x86-64 / ARM32 / RISC-V: $t"
+          done
 
   # CueKernel SPM package: the kernel C target + Swift facade (RFC 0003 D3).
   # macOS runner because the package needs an Apple Swift toolchain; the

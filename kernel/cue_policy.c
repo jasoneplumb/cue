@@ -22,7 +22,9 @@
  * set in a shipping build — the SESSION_ACK state-size tripwire cannot catch
  * it (state layout is unchanged), only the replay contract can. */
 #ifdef CUE_ABLATION_DISTANCE_GATE
-#ifdef PICO_BUILD
+/* IDF_VER covers every ESP-IDF target; PICO_BUILD covers the pico-sdk.
+ * Extend this list with each new firmware toolchain's sentinel macro. */
+#if defined(PICO_BUILD) || defined(IDF_VER)
 #error "CUE_ABLATION_DISTANCE_GATE is a replay-ablation research variant and must never reach firmware"
 #endif
 #ifndef CUE_ABLATION_MIN_NOTICE_M

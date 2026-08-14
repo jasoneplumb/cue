@@ -1,0 +1,49 @@
+name: Port request
+description: Propose porting the cue-policy kernel to a new MCU or toolchain
+title: "[port]: "
+labels: ["port"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        The kernel is two files of C99 with no dependencies — porting is
+        deliberately cheap, but certifying a port is not optional.
+        Read [PORTING.md](../blob/mainline/PORTING.md) first.
+  - type: input
+    id: target
+    attributes:
+      label: Target chip / board
+      description: e.g. STM32L432 Nucleo, ESP32-C3 DevKit, ATSAME54P20A Curiosity Ultra
+    validations:
+      required: true
+  - type: input
+    id: toolchain
+    attributes:
+      label: Toolchain
+      description: Compiler and version, e.g. arm-none-eabi-gcc 14.2, IAR EWARM 9.x, vendor SDK
+    validations:
+      required: true
+  - type: dropdown
+    id: hardware-testing
+    attributes:
+      label: Can you test on hardware?
+      options:
+        - "Yes — I have the target hardware and can run on-target certification"
+        - "No — compile-only (host cross-build, no board)"
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation / notes
+      description: Why this target? Anything unusual about the toolchain or memory budget?
+  - type: checkboxes
+    id: porting-contract
+    attributes:
+      label: Porting contract
+      options:
+        - label: >-
+            I have read PORTING.md and understand the certification contract —
+            the `sizeof(CuePolicyState)` state-size tripwire and on-target
+            certification against the checked-in trace corpus.
+          required: true
