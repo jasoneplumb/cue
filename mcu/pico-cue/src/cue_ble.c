@@ -552,6 +552,13 @@ bool cue_ble_is_connected(void) {
 
 bool cue_ble_is_up(void) { return radio_up; }
 
+bool cue_ble_decision_pending(uint16_t *seq_out) {
+  if (decision_pending && seq_out != NULL) {
+    *seq_out = cue_wire_get_u16(pending_decision);
+  }
+  return decision_pending;
+}
+
 bool cue_ble_has_central(void) {
   return con_handle != HCI_CON_HANDLE_INVALID;
 }
