@@ -270,13 +270,47 @@ final class ReviewMergeTests: XCTestCase {
     }
 
     func testUnsupportedSchemaVersionFails() throws {
+        // 3 is unknown; 1 and 2 are both readable (see the v2 test below).
         let trace = Data("""
-        { "schema_version": 2, "cue_decisions": [], "reviews": [] }
+        { "schema_version": 3, "cue_decisions": [], "reviews": [] }
         """.utf8)
         assertMergeThrows(
             trace: trace,
             sidecar: sidecar(#"[{ "event_id": 101, "outcome": "useful" }]"#),
-            .unsupportedSchemaVersion(2))
+            .unsupportedSchemaVersion(3))
+    }
+
+    func testSchemaVersion2TraceMerges() throws {
+        // Every ride the phone records is v2 (RideTraceRecorder stamps 2
+        // now that personal memory can bias a decision). Rejecting it
+        // stranded the grading round trip, so v2 must merge — and the
+        // personal_memory[] this tool does not read must round-trip.
+        let trace = Data("""
+        {
+          "schema_version": 2,
+          "cue_decisions": [
+            { "type": "HEAD_UP", "event_id": 101, "reason_code": 0,
+              "lead_time_s": 15, "t_ms": 1000 }
+          ],
+          "personal_memory": [
+            { "segment_id": 7, "state": "NEUTRAL", "notice_bonus_s": 2,
+              "t_ms": 0 }
+          ],
+          "reviews": []
+        }
+        """.utf8)
+        let incoming = sidecar(#"[{ "event_id": 101, "outcome": "too_late" }]"#)
+        let (merged, summary) = try CueReviewMerge.merge(trace: trace, sidecar: incoming)
+        XCTAssertEqual(summary, .init(merged: 1, added: 1, overwrote: 0))
+        let reviews = try reviewsArray(of: merged)
+        XCTAssertEqual(reviews.count, 1)
+        XCTAssertEqual(reviews[0]["outcome"] as? String, "too_late")
+        let root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: merged) as? [String: Any])
+        XCTAssertEqual(root["schema_version"] as? Int, 2)
+        let memory = try XCTUnwrap(root["personal_memory"] as? [[String: Any]])
+        XCTAssertEqual(memory.count, 1)
+        XCTAssertEqual(memory[0]["notice_bonus_s"] as? Int, 2)
     }
 
     func testUnrecognizedAcceptedFromSidecar() throws {
