@@ -1,9 +1,23 @@
 {
   "name": "cue-kernel",
   "version": "0.13.0-alpha",
-  "description": "Deterministic, allocation-free decision kernel with a bit-exact replay contract — 1 KB of C99, no OS dependencies. Cycling safety cue is the demonstrator.",
-  "keywords": ["embedded", "deterministic", "decision-layer", "replay", "mcu"],
-  "repository": { "type": "git", "url": "https://github.com/jasoneplumb/cue" },
+  "description": "Deterministic, allocation-free decision kernel with a bit-exact replay contract \u2014 1 KB of C99, no OS dependencies. Cycling safety cue is the demonstrator.",
+  "keywords": [
+    "embedded",
+    "deterministic",
+    "decision-layer",
+    "replay",
+    "mcu",
+    "rp2040",
+    "esp32-s2",
+    "cortex-m",
+    "riscv",
+    "c99"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jasoneplumb/cue"
+  },
   "license": "Apache-2.0",
   "frameworks": "*",
   "platforms": "*",
@@ -11,6 +25,9 @@
   "build": {
     "srcDir": "kernel",
     "includeDir": "kernel",
-    "srcFilter": ["-<*>", "+<cue_policy.c>"]
+    "srcFilter": [
+      "-<*>",
+      "+<cue_policy.c>"
+    ]
   }
 }
