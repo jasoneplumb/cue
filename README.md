@@ -2,6 +2,11 @@
 
 > _One tap before the squeeze._
 
+[![CI](https://github.com/jasoneplumb/cue/actions/workflows/ci.yml/badge.svg?branch=mainline)](https://github.com/jasoneplumb/cue/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/jasoneplumb/cue?include_prereleases)](https://github.com/jasoneplumb/cue/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![C99](https://img.shields.io/badge/C-C99-blue.svg)](kernel)
+
 A deterministic decision kernel with a field-enforced equivalence contract:
 the same C file runs live on a phone, as an MCU actuator, and in offline
 replay — and all three must agree, bit for bit, on every decision. On the
