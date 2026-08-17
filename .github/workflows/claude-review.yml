@@ -16,7 +16,7 @@ jobs:
       issues: write
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -31,7 +31,7 @@ jobs:
       # the prompt must name the repo and PR explicitly, or Claude has nothing
       # to review and exits after a few turns without posting (pattern learned
       # from infobento.com issue #185).
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@459ad358ae43fea66bfefd0a1f8d840b4b9791fb # v1.0.194
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |

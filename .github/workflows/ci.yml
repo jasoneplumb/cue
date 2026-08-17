@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Kernel — build and test
         run: make -C kernel test
@@ -66,7 +66,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Kernel + replay + examples under ASan/UBSan
         run: |
           SAN='-std=c99 -Wall -Wextra -Werror -pedantic -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all'
@@ -91,7 +91,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install cross toolchains + qemu-user
         run: |
           sudo apt-get update -q
@@ -124,7 +124,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: CueKernel — facade tests (swift test)
         run: swift test
@@ -149,7 +149,7 @@ jobs:
       ARM_GNU_TOOLCHAIN_SHA256: 62a63b981fe391a9cbad7ef51b17e49aeaa3e7b0d029b36ca1e9c3b2a9b78823
       PICO_SDK_TAG: "2.3.0"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: mcu — replay-port protocol logic (host compiler, no toolchain)
         run: make -C mcu test
@@ -164,7 +164,7 @@ jobs:
           echo "$RUNNER_TEMP/arm-gnu-toolchain/bin" >> "$GITHUB_PATH"
 
       - name: mcu — checkout pico-sdk (pinned)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: raspberrypi/pico-sdk
           ref: ${{ env.PICO_SDK_TAG }}
