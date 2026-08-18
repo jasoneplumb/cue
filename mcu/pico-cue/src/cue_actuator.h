@@ -92,11 +92,26 @@ void cue_actuator_poll(void);
  * pattern's declared duration (spec §12). */
 uint8_t cue_actuator_fire(uint8_t pattern);
 
-/* Stop whatever is playing right now — button A's acknowledge. The rider
- * has clearly received the cue, so continuing to buzz is noise. */
+/* Stop whatever is playing right now. The rider has clearly received the
+ * cue, so continuing to buzz is noise.
+ *
+ * To acknowledge a cue, use cue_actuator_acknowledge() instead — this
+ * silences unconditionally, including a cue that arrived microseconds
+ * ago. */
 void cue_actuator_silence(void);
 
-bool cue_actuator_is_active(void);
+/* Stop a cue IF one is playing, and report whether there was one.
+ *
+ * Button A's acknowledge, and one call rather than a query followed by
+ * cue_actuator_silence() because the two have to be indivisible: the ATT
+ * callbacks that start cues preempt the main loop, so a HEAD_UP landing
+ * between a check and a silence would be stopped by a press that was
+ * answering the cue before it — a cue this device decided to deliver and
+ * then swallowed, with nothing downstream able to tell (NFR-001).
+ *
+ * A false return means nothing was playing, which is the caller's cue to
+ * treat the press as meaning something else. */
+bool cue_actuator_acknowledge(void);
 
 /* Runtime candidate selection (the operator requirement on issue #154):
  * several patterns, comparable back-to-back without reflashing. */

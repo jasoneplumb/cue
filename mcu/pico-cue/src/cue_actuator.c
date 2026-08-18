@@ -400,11 +400,23 @@ void cue_actuator_silence(void) {
   actuator_unlock();
 }
 
-bool cue_actuator_is_active(void) {
+bool cue_actuator_acknowledge(void) {
   actuator_lock();
-  bool active = is_active();
+  /* Check and stop in ONE locked region. Split across two — which is what
+   * a public `is_active()` getter plus `_silence()` amounts to, however
+   * atomic each half is on its own — a HEAD_UP arriving in the gap gets
+   * silenced by a press that was answering the previous cue, and the
+   * rider never perceives it. A cue this device decided to deliver and
+   * then swallowed is worse than the noisy cueing NFR-001 forbids,
+   * because nothing downstream can tell it happened. */
+  bool acknowledged = is_active();
+  if (acknowledged) {
+    active_pattern = (uint8_t)CUE_PATTERN_SELECTED;
+    indicate_blinks = 0u;
+    apply();
+  }
   actuator_unlock();
-  return active;
+  return acknowledged;
 }
 
 uint8_t cue_actuator_selected(void) {

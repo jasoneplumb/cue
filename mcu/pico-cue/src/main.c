@@ -53,13 +53,14 @@ static const uint32_t k_battery_rgb[4] = {
 static void handle_button(CueButtonEvent event) {
   switch (event) {
     case CUE_BUTTON_A_SHORT:
-      if (cue_actuator_is_active()) {
-        /* Acknowledge: the rider has plainly received the cue, so the rest
-         * of the pattern is noise. */
-        cue_actuator_silence();
-      } else {
-        /* Idle, so the same button walks the candidates (issue #154's
-         * operator requirement) and reports where it landed. */
+      /* Acknowledge: the rider has plainly received the cue, so the rest
+       * of the pattern is noise. One call, not a query plus a silence —
+       * the actuator has to decide and act indivisibly, or a cue arriving
+       * between the two would be swallowed (#18).
+       *
+       * Nothing playing, so the same button walks the candidates (issue
+       * #154's operator requirement) and reports where it landed. */
+      if (!cue_actuator_acknowledge()) {
         uint8_t next = cue_actuator_next_pattern();
         cue_actuator_indicate(CUE_RGB_WHITE_DIM, (uint8_t)(next + 1u));
       }
