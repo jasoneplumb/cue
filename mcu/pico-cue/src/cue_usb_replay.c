@@ -256,12 +256,12 @@ static bool handle_diagnostic(const char *line, char *out, size_t out_cap) {
      * "the report never arrived" reads the same whether it was sent and
      * missed or is still queued here (#168). */
     uint16_t pending_seq = 0;
-    char pending_seq_text[12];
+    char pending_seq_num[12];
+    const char *pending_seq_text = "none";
     if (cue_ble_decision_pending(&pending_seq)) {
-      snprintf(pending_seq_text, sizeof(pending_seq_text), "%u",
+      snprintf(pending_seq_num, sizeof(pending_seq_num), "%u",
                (unsigned)pending_seq);
-    } else {
-      snprintf(pending_seq_text, sizeof(pending_seq_text), "none");
+      pending_seq_text = pending_seq_num;
     }
     /* radio/link are reported because "not advertising" has two causes
      * that look identical from off the board — the controller failed, or
@@ -269,7 +269,7 @@ static bool handle_diagnostic(const char *line, char *out, size_t out_cap) {
      * cost real debugging time. */
     snprintf(out, out_cap,
              "DIAG leds=%s selected=%u patterns=%u supply=%s battery_mv=%u "
-             "level=%u radio=%s link=%s pending_decision=%s",
+             "level=%u radio=%s link=%s pending_decision_seq=%s",
              cue_actuator_leds_ready() ? "ready" : "unavailable",
              (unsigned)cue_actuator_selected(), (unsigned)cue_pattern_count(),
              /* Which supply the millivolts were measured against. Without
