@@ -107,9 +107,23 @@ static void send_decision(void *context) {
   if (!decision_pending || con_handle == HCI_CON_HANDLE_INVALID) {
     return;
   }
-  decision_pending = false;
-  att_server_notify(con_handle, ATT_CHARACTERISTIC_85BF0004_C87E_4346_8A6C_440B3E57F451_01_VALUE_HANDLE,
+  /* Only clear the flag once BTstack has actually accepted the notify.
+   * On failure (MTU renegotiation, buffer exhaustion, a link dying
+   * between the can-send-now callback firing and this point) the report
+   * would otherwise vanish with decision_pending already false — a
+   * DIAG taken right after would read "delivered" for a report that
+   * was never sent. Re-request the callback instead so BTstack retries
+   * once it can accept another send; this is the ordering half of #20,
+   * not the multi-report overwrite half, which stays open there. */
+  uint8_t err = att_server_notify(con_handle, ATT_CHARACTERISTIC_85BF0004_C87E_4346_8A6C_440B3E57F451_01_VALUE_HANDLE,
                     pending_decision, sizeof(pending_decision));
+  if (err != 0) {
+    decision_callback.callback = &send_decision;
+    decision_callback.context = NULL;
+    att_server_request_to_send_notification(&decision_callback, con_handle);
+    return;
+  }
+  decision_pending = false;
 }
 
 static void send_control(void *context) {
@@ -117,9 +131,16 @@ static void send_control(void *context) {
   if (!control_pending || con_handle == HCI_CON_HANDLE_INVALID) {
     return;
   }
-  control_pending = false;
-  att_server_indicate(con_handle, ATT_CHARACTERISTIC_85BF0002_C87E_4346_8A6C_440B3E57F451_01_VALUE_HANDLE,
+  /* Same re-arm-on-failure reasoning as send_decision above. */
+  uint8_t err = att_server_indicate(con_handle, ATT_CHARACTERISTIC_85BF0002_C87E_4346_8A6C_440B3E57F451_01_VALUE_HANDLE,
                       pending_control, pending_control_len);
+  if (err != 0) {
+    control_callback.callback = &send_control;
+    control_callback.context = NULL;
+    att_server_request_to_send_indication(&control_callback, con_handle);
+    return;
+  }
+  control_pending = false;
 }
 
 static void queue_decision(const uint8_t *report) {
@@ -551,6 +572,24 @@ bool cue_ble_is_connected(void) {
 }
 
 bool cue_ble_is_up(void) { return radio_up; }
+
+bool cue_ble_decision_pending(uint16_t *seq_out) {
+  /* Called from the main loop (the wired DIAG handler); decision_pending
+   * and pending_decision[] are written from the ATT callbacks, which run
+   * on the async_context low-priority IRQ and preempt main() (#18, #23) —
+   * not the cooperative model this function used to assume. Same guard as
+   * cue_ble_poll()'s VSYS read: safe only once the driver is up. */
+  if (!cyw43_ready) {
+    return false;
+  }
+  cyw43_thread_enter();
+  bool pending = decision_pending;
+  if (pending) {
+    *seq_out = cue_wire_get_u16(pending_decision + CUE_WIRE_DECISION_REPORT_SEQ_OFFSET);
+  }
+  cyw43_thread_exit();
+  return pending;
+}
 
 bool cue_ble_has_central(void) {
   return con_handle != HCI_CON_HANDLE_INVALID;

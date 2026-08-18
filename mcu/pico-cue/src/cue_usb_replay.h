@@ -36,7 +36,19 @@ extern "C" {
 
 /* Longest well-formed request: STEP header + 16 events + memory. */
 #define CUE_USB_REPLAY_LINE_MAX 1024u
-#define CUE_USB_REPLAY_RESPONSE_MAX 128u
+/* Sized by DIAG, which is far and away the longest response. At its
+ * widest — every field at its reachable maximum, selected=/patterns=
+ * bounded by CUE_PATTERN_COUNT (6) — it is 138 bytes + NUL = 139:
+ *
+ *   DIAG leds=unavailable selected=5 patterns=6 supply=unknown
+ *   battery_mv=65535 level=3 radio=down link=advertising
+ *   pending_decision_seq=65535
+ *
+ * 139 into 192 leaves 53 bytes of slack for the next field. 128
+ * truncated the pre-pending_decision_seq version, and -Wformat-truncation
+ * caught it at build time rather than leaving a clipped diagnostic to be
+ * misread on a bench. */
+#define CUE_USB_REPLAY_RESPONSE_MAX 192u
 
 /* Reset protocol state: default config, fresh kernel state. */
 void cue_usb_replay_init(void);

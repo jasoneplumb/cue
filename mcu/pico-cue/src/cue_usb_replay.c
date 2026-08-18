@@ -252,13 +252,24 @@ static bool handle_diagnostic(const char *line, char *out, size_t out_cap) {
     uint16_t mv;
     uint8_t supply;
     cue_power_sample(&mv, &supply);
+    /* An undelivered DECISION is invisible from off the board otherwise:
+     * "the report never arrived" reads the same whether it was sent and
+     * missed or is still queued here (#168). */
+    uint16_t pending_seq = 0;
+    char pending_seq_num[12];
+    const char *pending_seq_text = "none";
+    if (cue_ble_decision_pending(&pending_seq)) {
+      snprintf(pending_seq_num, sizeof(pending_seq_num), "%u",
+               (unsigned)pending_seq);
+      pending_seq_text = pending_seq_num;
+    }
     /* radio/link are reported because "not advertising" has two causes
      * that look identical from off the board — the controller failed, or
      * a central already holds the link — and guessing between them has
      * cost real debugging time. */
     snprintf(out, out_cap,
              "DIAG leds=%s selected=%u patterns=%u supply=%s battery_mv=%u "
-             "level=%u radio=%s link=%s",
+             "level=%u radio=%s link=%s pending_decision_seq=%s",
              cue_actuator_leds_ready() ? "ready" : "unavailable",
              (unsigned)cue_actuator_selected(), (unsigned)cue_pattern_count(),
              /* Which supply the millivolts were measured against. Without
@@ -268,7 +279,8 @@ static bool handle_diagnostic(const char *line, char *out, size_t out_cap) {
              cue_ble_is_up() ? "up" : "down",
              cue_ble_has_central()
                  ? (cue_ble_is_connected() ? "subscribed" : "connected")
-                 : "advertising");
+                 : "advertising",
+             pending_seq_text);
     return true;
   }
   if (strncmp(line, "TONE ", 5) == 0) {

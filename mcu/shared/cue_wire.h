@@ -77,6 +77,10 @@ extern "C" {
  * the measured delay in afterwards (it owns the clock, the session does
  * not). Spelled as literals in both places, inserting a field ahead of
  * them would silently corrupt whichever site was not updated. */
+#define CUE_WIRE_DECISION_REPORT_SEQ_OFFSET 0u
+_Static_assert(CUE_WIRE_DECISION_REPORT_SIZE >
+                   CUE_WIRE_DECISION_REPORT_SEQ_OFFSET + 1u,
+               "seq field overruns the DECISION report");
 #define CUE_WIRE_DECISION_REPORT_ACTUATED_OFFSET                       \
   (2u + 4u + CUE_WIRE_DECISION_SIZE) /* 14 */
 /* Renamed with the unit in v2 (was ..._DELAY_OFFSET) so that any site

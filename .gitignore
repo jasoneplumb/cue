@@ -45,3 +45,8 @@ docs/*.pdf
 
 # Generated demo corpus (make demo-corpus) — regenerate, never commit
 /demo-rides/
+
+# Byte-compiled Python. blecheck.py is importable (host tools reuse its
+# wire helpers), so running one from the repo root leaves these behind.
+__pycache__/
+*.pyc

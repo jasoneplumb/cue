@@ -44,6 +44,27 @@ bool cue_ble_is_up(void);
 /* True while a central holds the connection (subscribed or not). */
 bool cue_ble_has_central(void);
 
+/* Whether a DECISION report is queued but not yet delivered, and for which
+ * seq. Exposed for the wired DIAG line only.
+ *
+ * "The report never arrived" has two causes that are indistinguishable
+ * from off the board — it was sent and the central missed it, or it is
+ * still sitting here — and that ambiguity is exactly what made #168 hard
+ * to pin down. Same reasoning as radio=/link=.
+ *
+ * seq_out must be non-NULL: it is written only when the function returns
+ * true, and left untouched otherwise, so a caller must supply storage to
+ * read it from.
+ *
+ * Callable only from the main loop. decision_pending and the report body
+ * are written from ATT callbacks, which — despite the driver being named
+ * pico_cyw43_arch_none — run on the pico-sdk async_context's low-priority
+ * IRQ and preempt main() (#18, #23), not cooperatively. The implementation
+ * takes the cyw43 lock (cyw43_thread_enter/exit) around the read for
+ * exactly that reason, and returns false before the driver has come up
+ * rather than take an uninitialised lock. */
+bool cue_ble_decision_pending(uint16_t *seq_out);
+
 #ifdef __cplusplus
 }
 #endif
