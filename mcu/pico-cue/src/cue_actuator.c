@@ -483,9 +483,11 @@ void cue_actuator_tone(uint16_t hz, uint16_t ms) {
 void cue_actuator_led_probe(uint32_t rgb, uint16_t ms) {
   actuator_lock();
   if (ms == 0u) {
-    probe_led_end_ms = 0u;
-    led_last_rgb = 0xFFFFFFFFu; /* force the next real write through */
-    apply();
+    if (probe_led_end_ms != 0u) {
+      probe_led_end_ms = 0u;
+      led_last_rgb = 0xFFFFFFFFu; /* force the next real write through */
+      apply();
+    }
     actuator_unlock();
     return;
   }
