@@ -186,6 +186,16 @@ int main(void) {
                                   sizeof(ctrl_out), &out_len, &test_cue);
   check(ctrl_out[1] == CUE_CTRL_STATUS_NOT_RIDING, "resume while idle refused");
 
+  /* STOP with no session open is idempotent by design, unlike RESUME above:
+   * a phone that rebooted mid-ride must be able to reset a Pico already
+   * sitting idle without a spurious NOT_RIDING refusal (issue #21). */
+  cue_session_init(&s);
+  buf[0] = (uint8_t)CUE_CTRL_SESSION_STOP;
+  st = cue_session_handle_control(&s, buf, 1, ctrl_out, sizeof(ctrl_out), &out_len,
+                                  &test_cue);
+  check(st == CUE_SESSION_OK && ctrl_out[1] == CUE_CTRL_STATUS_OK,
+        "stop while idle is idempotent, not NOT_RIDING");
+
   /* Wrong protocol version is refused cleanly, session stays closed. */
   len = build_start(buf, 1u, (uint8_t)(CUE_WIRE_PROTO_VERSION + 1u));
   st = cue_session_handle_control(&s, buf, len, ctrl_out, sizeof(ctrl_out),

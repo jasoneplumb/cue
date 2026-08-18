@@ -157,7 +157,11 @@ extern "C" {
 #define CUE_CTRL_STATUS_BAD_LENGTH 2u  /* payload length != the opcode's size */
 #define CUE_CTRL_STATUS_WRONG_RIDE 3u  /* resume for a ride this Pico never had
                                         * (it rebooted) — phone must restart  */
-#define CUE_CTRL_STATUS_NOT_RIDING 4u  /* resume/stop with no session open    */
+#define CUE_CTRL_STATUS_NOT_RIDING 4u  /* resume with no session open. STOP is
+                                        * deliberately idempotent (a phone
+                                        * that rebooted mid-ride must be able
+                                        * to reset an already-idle Pico) and
+                                        * always acks OK — see cue_session.c */
 #define CUE_CTRL_STATUS_BAD_OPCODE 5u
 #define CUE_CTRL_STATUS_BAD_PATTERN 6u /* TEST_CUE index outside the table */
 

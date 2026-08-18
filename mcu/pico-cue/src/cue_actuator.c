@@ -202,6 +202,15 @@ static bool is_active(void) {
   return active_pattern != (uint8_t)CUE_PATTERN_SELECTED;
 }
 
+/* Shared by the natural-expiry path in apply() and the explicit-cancel
+ * entry point, so the two termination modes cannot drift apart the way
+ * they had before #21: one clearing only probe_led_end_ms while the
+ * other also forced the dedupe. */
+static void end_led_probe(void) {
+  probe_led_end_ms = 0u;
+  led_last_rgb = 0xFFFFFFFFu; /* force the next real write through */
+}
+
 /* The single point where anything reaches hardware. Callers must hold the
  * lock — every public entry point does. Priority is
  * cue > indication > status: a cue must never be masked by a status
@@ -224,8 +233,7 @@ static void apply(void) {
     if ((int32_t)(t - probe_led_end_ms) < 0) {
       led_probing = true;
     } else {
-      probe_led_end_ms = 0u;
-      led_last_rgb = 0xFFFFFFFFu; /* force the next real write through */
+      end_led_probe();
     }
   }
   /* Both outputs are driven from the probe state whenever EITHER probe is
@@ -483,7 +491,10 @@ void cue_actuator_tone(uint16_t hz, uint16_t ms) {
 void cue_actuator_led_probe(uint32_t rgb, uint16_t ms) {
   actuator_lock();
   if (ms == 0u) {
-    probe_led_end_ms = 0u;
+    if (probe_led_end_ms != 0u) {
+      end_led_probe();
+      apply();
+    }
     actuator_unlock();
     return;
   }
