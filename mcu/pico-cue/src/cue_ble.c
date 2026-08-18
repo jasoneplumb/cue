@@ -458,6 +458,12 @@ bool cue_ble_init(void) {
    * condition and would report "unknown supply" on a board whose driver
    * is fine and whose controller merely failed. */
   cue_power_set_radio_available(true);
+  /* Same fact, second consumer: the actuator's state is reached from both
+   * the main loop and the ATT callbacks this driver will dispatch from a
+   * low-priority IRQ, so from here on it must serialise on the cyw43 lock
+   * (#18). Told before hci_power_control() below, so it is true before any
+   * connection exists to produce an ATT write. */
+  cue_actuator_set_lock_available(true);
   cue_session_init(&session);
 
   l2cap_init();

@@ -14,6 +14,14 @@
  *          BTstack's radio work for the pattern's whole duration, which
  *          at 1.6 s is sixteen missed step writes.
  *
+ *          Entry points are reached from two execution contexts — the
+ *          main loop, and the BTstack ATT callbacks, which pico-sdk
+ *          dispatches from a low-priority IRQ that preempts main(). Every
+ *          one of them therefore takes the cyw43 async_context lock; see
+ *          the header block of cue_actuator.c for why, and issue #18 for
+ *          what tears without it. Callers need do nothing, EXCEPT call
+ *          cue_actuator_set_lock_available() once (below).
+ *
  *          The timing and §12 non-escalation rules live in cue_pattern.c,
  *          which is pure and host-tested. This file owns only hardware
  *          and priority: cue > indication > status.
@@ -45,8 +53,25 @@ typedef enum {
 /* Claim GP9's PWM slice and a PIO1 state machine for GP22, and start in
  * ADVERTISING. Returns false if no PIO resource was available, in which
  * case the buzzer still works and the LEDs stay dark — a cue you can hear
- * but not see beats no cue at all. */
+ * but not see beats no cue at all.
+ *
+ * Runs before cyw43_arch_init(), so it does not lock — see
+ * cue_actuator_set_lock_available(). */
 bool cue_actuator_init(void);
+
+/* Tell the actuator that cyw43_arch_init() has succeeded, so its lock may
+ * now be taken.
+ *
+ * Two things become true at that instant and this is both of them: the
+ * async_context exists (before it, `cyw43_thread_enter()` dereferences a
+ * NULL context and faults), and the BTstack IRQ that can preempt this
+ * module's state exists. main() deliberately keeps running when
+ * cue_ble_init() fails — the wired replay port is the Phase A
+ * certification path — so locking unconditionally would wedge precisely
+ * the loop that tolerance protects. The mirror of cue_power.c's
+ * `radio_available`, and told from the same place for the same reason:
+ * one fact, one owner. */
+void cue_actuator_set_lock_available(bool available);
 
 /* Advance the rendering. Call every main-loop iteration; it does nothing
  * but read a clock when nothing is playing. */
