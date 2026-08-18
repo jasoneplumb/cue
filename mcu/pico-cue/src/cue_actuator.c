@@ -6,6 +6,59 @@
  *          not acquire timing rules of its own, or the §12 non-escalation
  *          guarantee would live in two places and only one of them would
  *          be tested.
+ *
+ * Why the cyw43 lock is here, and why removing it is a regression (#18).
+ *
+ *   This state machine LOOKS single-threaded. It is not. CMakeLists.txt
+ *   links `pico_cyw43_arch_none`, which in pico-sdk 2.3.0 does not mean
+ *   "no async context" — it links `pico_async_context_threadsafe_background`
+ *   (pico_cyw43_arch/CMakeLists.txt:76-83, which also defines
+ *   PICO_CYW43_ARCH_THREADSAFE_BACKGROUND=1). BTstack registers its run
+ *   loop as a when-pending worker on that context
+ *   (pico_btstack/btstack_run_loop_async_context.c:21), and that context
+ *   dispatches its workers from `low_priority_irq_handler` — a claimed
+ *   user IRQ, `irq_set_exclusive_handler` + `irq_set_enabled`
+ *   (async_context_threadsafe_background.c:165-177, :290).
+ *
+ *   So every ATT callback runs in interrupt context and preempts main().
+ *   Two of this module's entry points are reached from there —
+ *   `cue_actuator_fire()` for a TEST_CUE write and for a kernel HEAD_UP
+ *   (cue_ble.c:337, :360) — while `_poll` and the button handlers reach
+ *   the same state from the main loop. Unsynchronized, three states tear,
+ *   and every one of them is silent:
+ *
+ *     - `buzzer_set()` commits its `current_hz` cache before it touches a
+ *       PWM register. A preemption in that gap leaves the cache claiming
+ *       a tone that the PWM is not producing, and the dedupe check then
+ *       suppresses every future attempt to start it. The LED strobes the
+ *       whole pattern in silence.
+ *     - `apply()` samples `now_ms()` at the top and reads
+ *       `active_start_ms` much further down. A fire landing between them
+ *       makes `t - active_start_ms` underflow to ~4.29e9 ms, so
+ *       cue_pattern_render reports past-the-end and the cue is cancelled
+ *       after an instant.
+ *     - `leds_set()` commits `led_last_rgb` before pushing
+ *       CUE_LED_COUNT words to the PIO. A preemption between pushes
+ *       latches two colours on one strip, and the dedupe suppresses the
+ *       corrective rewrite until the value next changes — indefinitely,
+ *       for a steady colour.
+ *
+ *   None of these is reproducible on a bench and all three present as
+ *   "the cue didn't fire" or "the cue was silent", which this system
+ *   would otherwise attribute to the policy.
+ *
+ *   `cyw43_thread_enter()` / `cyw43_thread_exit()` are
+ *   `async_context_acquire_lock_blocking` / `_release_lock` on exactly
+ *   that context (cyw43_driver.c:247), so they are precisely the lock the
+ *   preempting side holds: `low_priority_irq_handler` only dispatches
+ *   when its recursive-mutex enter count comes back 1, and backs off
+ *   without running any worker when it has preempted a holder. They are
+ *   recursion-safe by design, so the IRQ-side calls (which already run
+ *   under the lock) pay only a mutex increment — `actuation_delay_us`
+ *   (RFC 0006 D3) is unaffected. cue_power.c:106 established the idiom.
+ *
+ *   The rule is uniform on purpose: EVERY public entry point brackets its
+ *   body, so no reader has to work out which ones are "the safe ones".
  */
 #ifdef PICO_BUILD
 
@@ -14,6 +67,7 @@
 #include "hardware/clocks.h"
 #include "hardware/pio.h"
 #include "hardware/pwm.h"
+#include "pico/cyw43_arch.h"
 #include "pico/stdlib.h"
 
 #include "ws2812.pio.h" /* generated from ws2812.pio by pico_generate_pio_header */
@@ -144,7 +198,12 @@ static uint32_t status_rgb(uint32_t t) {
   }
 }
 
-/* The single point where anything reaches hardware. Priority is
+static bool is_active(void) {
+  return active_pattern != (uint8_t)CUE_PATTERN_SELECTED;
+}
+
+/* The single point where anything reaches hardware. Callers must hold the
+ * lock — every public entry point does. Priority is
  * cue > indication > status: a cue must never be masked by a status
  * animation, and an indication must never be mistaken for a cue. */
 static void apply(void) {
@@ -178,7 +237,7 @@ static void apply(void) {
     return;
   }
 
-  if (active_pattern != (uint8_t)CUE_PATTERN_SELECTED) {
+  if (is_active()) {
     CueActuation a;
     cue_pattern_render(active_pattern, t - active_start_ms, &a);
     if (a.active) {
@@ -208,9 +267,52 @@ static void apply(void) {
   leds_set(status_rgb(t));
 }
 
+/* --- mutual exclusion ----------------------------------------------------- */
+
+/* False until cyw43_arch_init() has succeeded. Two facts at once, and they
+ * become true at the same instant: the async_context (and therefore the
+ * lock) exists, and the IRQ that can preempt us exists. Before that point
+ * the lock must NOT be taken — `cyw43_async_context` is still NULL, so
+ * cyw43_thread_enter() would fault. That matters because main() keeps
+ * running deliberately when cue_ble_init() fails (the replay port is the
+ * Phase A certification path): an unconditional lock would wedge exactly
+ * the loop that tolerance exists to protect, which is the same trap
+ * cue_power.c's `radio_available` flag avoids.
+ *
+ * Set from main-loop context by cue_ble_init(), before hci_power_control()
+ * and therefore before any connection exists to generate an ATT write, so
+ * no entry point can straddle the transition and take the lock without
+ * releasing it.
+ *
+ * Monotonic, and its setter takes no argument so that it cannot be
+ * otherwise. actuator_lock() and actuator_unlock() read this flag
+ * independently, so a value that could go back to false would have
+ * acquire take the mutex and release skip it — a permanent deadlock from
+ * one plausible teardown call. A one-way latch removes that failure mode
+ * at the type level rather than by convention. */
+static bool lock_available;
+
+static void actuator_lock(void) {
+  if (lock_available) {
+    cyw43_thread_enter();
+  }
+}
+
+static void actuator_unlock(void) {
+  if (lock_available) {
+    cyw43_thread_exit();
+  }
+}
+
 /* --- API ------------------------------------------------------------------ */
 
 bool cue_actuator_init(void) {
+  /* Bracketed for the uniform rule, not because it can contend: this runs
+   * from main() before cue_ble_init(), so `lock_available` is still false
+   * and both calls are no-ops. Leaving it bracketed means the invariant
+   * "every entry point takes the lock" has no exceptions to remember if
+   * the init order ever changes. */
+  actuator_lock();
   gpio_set_function(CUE_PIN_BUZZER, GPIO_FUNC_PWM);
   buzzer_slice = pwm_gpio_to_slice_num(CUE_PIN_BUZZER);
   buzzer_channel = pwm_gpio_to_channel(CUE_PIN_BUZZER);
@@ -233,15 +335,47 @@ bool cue_actuator_init(void) {
 
   status_state = (uint8_t)CUE_ACT_STATUS_ADVERTISING;
   apply();
-  return led_ready;
+  bool ready = led_ready;
+  actuator_unlock();
+  return ready;
 }
 
-void cue_actuator_poll(void) { apply(); }
+void cue_actuator_set_lock_available(void) { lock_available = true; }
+
+void cue_actuator_poll(void) {
+  /* Rate-limited to once per millisecond, and this is about the lock, not
+   * about apply(). Releasing the OUTERMOST cyw43 lock runs
+   * `process_under_lock()`, which re-arms the async_context's alarm — the
+   * SDK puts that at "10s of microseconds"
+   * (async_context_threadsafe_background.c, the comment above the
+   * alarm_pending optimization; the optimization does not fire when the
+   * next timeout is unchanged, which is the steady state). Paying that on
+   * every iteration of a loop that also has to service USB and buttons is
+   * a cost this fix would otherwise have introduced by itself.
+   *
+   * Skipping is provably lossless: every rendering decision below is a
+   * function of `now_ms()` in whole milliseconds and of state that only
+   * the other entry points change — and each of those calls apply()
+   * itself, under the lock. So a second poll inside the same millisecond
+   * can only recompute the identical frame. */
+  static uint32_t last_poll_ms;
+  uint32_t t = now_ms();
+  if (t == last_poll_ms) {
+    return;
+  }
+  last_poll_ms = t;
+
+  actuator_lock();
+  apply();
+  actuator_unlock();
+}
 
 uint8_t cue_actuator_fire(uint8_t pattern) {
+  actuator_lock();
   uint8_t index = (pattern == (uint8_t)CUE_PATTERN_SELECTED) ? selected_pattern
                                                              : pattern;
   if (!cue_pattern_valid(index)) {
+    actuator_unlock();
     return (uint8_t)CUE_PATTERN_SELECTED;
   }
   active_pattern = index;
@@ -249,70 +383,121 @@ uint8_t cue_actuator_fire(uint8_t pattern) {
   indicate_blinks = 0u; /* a cue outranks whatever question was being answered */
   /* Drive hardware now rather than on the next poll: the caller measures
    * actuation_delay_ms across this call (RFC 0006 D3), and a report that
-   * excluded the main loop's own latency would flatter the number. */
+   * excluded the main loop's own latency would flatter the number. The
+   * lock does not change what that number measures — on this path it is
+   * already held by the dispatching IRQ, so it costs a recursive-mutex
+   * increment. */
   apply();
+  actuator_unlock();
   return index;
 }
 
 void cue_actuator_silence(void) {
+  actuator_lock();
   active_pattern = (uint8_t)CUE_PATTERN_SELECTED;
   indicate_blinks = 0u;
   apply();
+  actuator_unlock();
 }
 
-bool cue_actuator_is_active(void) {
-  return active_pattern != (uint8_t)CUE_PATTERN_SELECTED;
+bool cue_actuator_acknowledge(void) {
+  actuator_lock();
+  /* Check and stop in ONE locked region. Split across two — which is what
+   * a public `is_active()` getter plus `_silence()` amounts to, however
+   * atomic each half is on its own — a HEAD_UP arriving in the gap gets
+   * silenced by a press that was answering the previous cue, and the
+   * rider never perceives it. A cue this device decided to deliver and
+   * then swallowed is worse than the noisy cueing NFR-001 forbids,
+   * because nothing downstream can tell it happened. */
+  bool acknowledged = is_active();
+  if (acknowledged) {
+    active_pattern = (uint8_t)CUE_PATTERN_SELECTED;
+    indicate_blinks = 0u;
+    apply();
+  }
+  actuator_unlock();
+  return acknowledged;
 }
 
-uint8_t cue_actuator_selected(void) { return selected_pattern; }
+uint8_t cue_actuator_selected(void) {
+  actuator_lock();
+  uint8_t pattern = selected_pattern;
+  actuator_unlock();
+  return pattern;
+}
 
 void cue_actuator_select(uint8_t pattern) {
+  actuator_lock();
   if (cue_pattern_valid(pattern)) {
     selected_pattern = pattern;
   }
+  actuator_unlock();
 }
 
 uint8_t cue_actuator_next_pattern(void) {
+  actuator_lock();
   selected_pattern =
       (uint8_t)((selected_pattern + 1u) % (uint8_t)cue_pattern_count());
-  return selected_pattern;
+  uint8_t pattern = selected_pattern;
+  actuator_unlock();
+  return pattern;
 }
 
 void cue_actuator_indicate(uint32_t rgb, uint8_t count) {
-  if (count == 0u || cue_actuator_is_active()) {
+  actuator_lock();
+  /* The internal `is_active()`, not the public entry point: the check and
+   * the write that depends on it have to sit inside ONE locked region, or
+   * a cue landing between them would be overwritten by the indication it
+   * is supposed to outrank. */
+  if (count == 0u || is_active()) {
+    actuator_unlock();
     return;
   }
   indicate_rgb = rgb;
   indicate_blinks = count;
   indicate_start_ms = now_ms();
   apply();
+  actuator_unlock();
 }
 
 void cue_actuator_set_status(CueActuatorStatus status) {
+  actuator_lock();
   status_state = (uint8_t)status;
+  actuator_unlock();
 }
 
 void cue_actuator_tone(uint16_t hz, uint16_t ms) {
+  actuator_lock();
   if (hz == 0u || ms == 0u) {
     probe_tone_hz = 0u;
     buzzer_set(0u);
+    actuator_unlock();
     return;
   }
   probe_tone_hz = hz;
   probe_tone_end_ms = now_ms() + ms;
   apply();
+  actuator_unlock();
 }
 
 void cue_actuator_led_probe(uint32_t rgb, uint16_t ms) {
+  actuator_lock();
   if (ms == 0u) {
     probe_led_end_ms = 0u;
+    actuator_unlock();
     return;
   }
   probe_led_rgb = rgb;
   probe_led_end_ms = now_ms() + ms;
   apply();
+  actuator_unlock();
 }
 
-bool cue_actuator_leds_ready(void) { return led_ready; }
+bool cue_actuator_leds_ready(void) {
+  actuator_lock();
+  bool ready = led_ready;
+  actuator_unlock();
+  return ready;
+}
 
 #endif /* PICO_BUILD */
