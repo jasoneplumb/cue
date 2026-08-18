@@ -411,15 +411,19 @@ static void hci_packet_handler(uint8_t packet_type, uint16_t channel,
       }
       break;
     case HCI_EVENT_DISCONNECTION_COMPLETE:
-      /* Deliberately does NOT reset the session: kernel state belongs to
-       * the ride, not the connection, so the phone can reconnect and
-       * SESSION_RESUME rather than re-streaming everything (RFC 0006 D4). */
+      /* Per-connection state is cleared here: CCCDs, pending sends, and the
+       * ATT long-write assembly buffer, none of which mean anything once
+       * the link is gone. Deliberately does NOT reset the session: kernel
+       * state belongs to the ride, not the connection, so the phone can
+       * reconnect and SESSION_RESUME rather than re-streaming everything
+       * (RFC 0006 D4). */
       con_handle = HCI_CON_HANDLE_INVALID;
       decision_cccd = 0;
       status_cccd = 0;
       control_cccd = 0;
       decision_pending = false;
       control_pending = false;
+      assembly_reset();
       gap_advertisements_enable(1);
       break;
     case HCI_EVENT_META_GAP:
