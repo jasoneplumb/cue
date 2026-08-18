@@ -279,10 +279,17 @@ static void apply(void) {
  * the loop that tolerance exists to protect, which is the same trap
  * cue_power.c's `radio_available` flag avoids.
  *
- * Monotonic and set from main-loop context by cue_ble_init(), before
- * hci_power_control() and therefore before any connection exists to
- * generate an ATT write, so no entry point can straddle the transition
- * and take the lock without releasing it. */
+ * Set from main-loop context by cue_ble_init(), before hci_power_control()
+ * and therefore before any connection exists to generate an ATT write, so
+ * no entry point can straddle the transition and take the lock without
+ * releasing it.
+ *
+ * Monotonic, and its setter takes no argument so that it cannot be
+ * otherwise. actuator_lock() and actuator_unlock() read this flag
+ * independently, so a value that could go back to false would have
+ * acquire take the mutex and release skip it — a permanent deadlock from
+ * one plausible teardown call. A one-way latch removes that failure mode
+ * at the type level rather than by convention. */
 static bool lock_available;
 
 static void actuator_lock(void) {
@@ -333,9 +340,7 @@ bool cue_actuator_init(void) {
   return ready;
 }
 
-void cue_actuator_set_lock_available(bool available) {
-  lock_available = available;
-}
+void cue_actuator_set_lock_available(void) { lock_available = true; }
 
 void cue_actuator_poll(void) {
   /* Rate-limited to once per millisecond, and this is about the lock, not

@@ -70,8 +70,13 @@ bool cue_actuator_init(void);
  * certification path — so locking unconditionally would wedge precisely
  * the loop that tolerance protects. The mirror of cue_power.c's
  * `radio_available`, and told from the same place for the same reason:
- * one fact, one owner. */
-void cue_actuator_set_lock_available(bool available);
+ * one fact, one owner.
+ *
+ * One-way and takes no argument deliberately: the lock helpers test the
+ * flag independently on acquire and on release, so a flag that could go
+ * back to false would acquire the mutex and then skip releasing it. There
+ * is no legitimate caller for that, and no parameter to pass it. */
+void cue_actuator_set_lock_available(void);
 
 /* Advance the rendering. Call every main-loop iteration; it does nothing
  * but read a clock when nothing is playing. */

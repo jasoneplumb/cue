@@ -463,7 +463,7 @@ bool cue_ble_init(void) {
    * low-priority IRQ, so from here on it must serialise on the cyw43 lock
    * (#18). Told before hci_power_control() below, so it is true before any
    * connection exists to produce an ATT write. */
-  cue_actuator_set_lock_available(true);
+  cue_actuator_set_lock_available();
   cue_session_init(&session);
 
   l2cap_init();
