@@ -20,6 +20,17 @@
 
 /* WuKong 2040 pinout (RFC 0006 D1). */
 #define CUE_PIN_BUZZER 9u
+
+/* The antiphase leg for differential drive (RFC 0007 D2).
+ *
+ * GP8 is not arbitrary: on RP2040 the slice is (gpio >> 1) & 7, so GP8 and
+ * GP9 are channel A and channel B of the SAME slice 4. They therefore share
+ * wrap and clkdiv and are phase-locked by construction — antiphase is one
+ * polarity bit, with no software synchronisation to drift.
+ *
+ * CANDIDATE: nothing has established that GP8 is free on a WuKong 2040.
+ * Elecfreaks publishes no schematic. Verify before wiring. */
+#define CUE_PIN_BUZZER_N 8u
 #define CUE_PIN_LEDS 22u
 #define CUE_LED_COUNT 2u
 
@@ -46,6 +57,14 @@
 
 static uint buzzer_slice;
 static uint buzzer_channel;
+static uint buzzer_channel_n;
+
+/* RFC 0007 D2. Defaults to the WuKong's own topology so that a build with no
+ * external element behaves exactly as it did before this existed. */
+static uint8_t drive_mode = (uint8_t)CUE_DRIVE_SINGLE;
+/* buzzer_set() caches on frequency; a topology change must punch through that
+ * cache, or switching mode mid-tone would do nothing until the next pitch. */
+static bool drive_mode_dirty;
 
 static PIO led_pio;
 static int led_sm = -1;
@@ -77,14 +96,36 @@ static uint32_t probe_led_end_ms;
 
 static uint32_t now_ms(void) { return to_ms_since_boot(get_absolute_time()); }
 
+/* Point the negative leg at whatever the current topology wants.
+ *
+ * SINGLE: level 0 with no inversion, so the leg sits at a hard low and the
+ * element sees exactly the grounded-return topology the WuKong has.
+ *
+ * DIFFERENTIAL: half duty WITH the channel inverted, so it is the exact
+ * complement of the positive leg. The inversion must be cleared again in
+ * SINGLE mode — an inverted channel parked at level 0 outputs a constant
+ * HIGH, which would leave DC across the element instead of grounding it.
+ * That mistake is silent and would slowly cook a piezo. */
+static void buzzer_leg_n(uint16_t hz) {
+  const bool differential = (drive_mode == (uint8_t)CUE_DRIVE_DIFFERENTIAL);
+  const bool invert_a = differential && (buzzer_channel_n == PWM_CHAN_A);
+  const bool invert_b = differential && (buzzer_channel_n == PWM_CHAN_B);
+
+  pwm_set_output_polarity(buzzer_slice, invert_a, invert_b);
+  pwm_set_chan_level(buzzer_slice, buzzer_channel_n,
+                     (differential && hz != 0u) ? CUE_PWM_HALF : 0u);
+}
+
 static void buzzer_set(uint16_t hz) {
   static uint16_t current_hz = 0xFFFFu;
-  if (hz == current_hz) {
+  if (hz == current_hz && !drive_mode_dirty) {
     return;
   }
   current_hz = hz;
+  drive_mode_dirty = false;
   if (hz == 0u) {
     pwm_set_chan_level(buzzer_slice, buzzer_channel, 0u);
+    buzzer_leg_n(0u);
     return;
   }
   /* divider = clk_sys / (hz * (wrap + 1)), in 8.4 fixed point. */
@@ -96,6 +137,7 @@ static void buzzer_set(uint16_t hz) {
   }
   pwm_set_clkdiv(buzzer_slice, div);
   pwm_set_chan_level(buzzer_slice, buzzer_channel, CUE_PWM_HALF);
+  buzzer_leg_n(hz);
 }
 
 static uint32_t scale_rgb(uint32_t rgb, uint32_t pct) {
@@ -214,8 +256,22 @@ bool cue_actuator_init(void) {
   gpio_set_function(CUE_PIN_BUZZER, GPIO_FUNC_PWM);
   buzzer_slice = pwm_gpio_to_slice_num(CUE_PIN_BUZZER);
   buzzer_channel = pwm_gpio_to_channel(CUE_PIN_BUZZER);
+
+  /* Both legs must live on one slice, or they share no counter and antiphase
+   * becomes a software-timing problem instead of a polarity bit. This holds
+   * for GP8/GP9 by RP2040's slice = (gpio >> 1) & 7; the assert is here so
+   * that moving either pin to a different slice fails at build time rather
+   * than producing a quietly wrong waveform. */
+  _Static_assert((CUE_PIN_BUZZER >> 1) == (CUE_PIN_BUZZER_N >> 1),
+                 "buzzer legs must share one PWM slice for antiphase drive");
+
+  gpio_set_function(CUE_PIN_BUZZER_N, GPIO_FUNC_PWM);
+  buzzer_channel_n = pwm_gpio_to_channel(CUE_PIN_BUZZER_N);
+
   pwm_set_wrap(buzzer_slice, CUE_PWM_WRAP);
   pwm_set_chan_level(buzzer_slice, buzzer_channel, 0u);
+  pwm_set_output_polarity(buzzer_slice, false, false);
+  pwm_set_chan_level(buzzer_slice, buzzer_channel_n, 0u);
   pwm_set_enabled(buzzer_slice, true);
 
   /* PIO1: PIO0 belongs to the CYW43 driver on a Pico W. */
@@ -237,6 +293,29 @@ bool cue_actuator_init(void) {
 }
 
 void cue_actuator_poll(void) { apply(); }
+
+uint8_t cue_actuator_drive_mode(void) { return drive_mode; }
+
+void cue_actuator_set_drive_mode(uint8_t mode) {
+  if (mode >= (uint8_t)CUE_DRIVE_MODE_COUNT) {
+    return; /* refused, not clamped — see the header */
+  }
+  if (mode == drive_mode) {
+    return;
+  }
+  drive_mode = mode;
+  drive_mode_dirty = true;
+  /* Take effect now. The point of a runtime switch is a back-to-back A/B:
+   * having to wait for the next tone would put a gap in exactly the
+   * comparison it exists to enable. */
+  apply();
+}
+
+uint8_t cue_actuator_next_drive_mode(void) {
+  cue_actuator_set_drive_mode(
+      (uint8_t)((drive_mode + 1u) % CUE_DRIVE_MODE_COUNT));
+  return drive_mode;
+}
 
 uint8_t cue_actuator_fire(uint8_t pattern) {
   uint8_t index = (pattern == (uint8_t)CUE_PATTERN_SELECTED) ? selected_pattern

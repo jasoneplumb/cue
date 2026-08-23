@@ -239,6 +239,12 @@ void cue_usb_replay_handle_line(const char *line, char *out, size_t out_cap) {
  *                    gets measured instead of assumed
  *   LEDS <rrggbb>,<ms>  force a colour — separates "LED code is wrong"
  *                    from "pin or pixels are wrong"
+ *   DRIVE [<mode>]   piezo drive topology (RFC 0007 D2): 0 single, 1
+ *                    differential; bare DRIVE toggles. Needs an EXTERNAL
+ *                    element across GP9/GP8 — the onboard buzzer's return is
+ *                    the ground plane, so differential does nothing audible
+ *                    on it, and that null result is indistinguishable from
+ *                    "the idea does not work"
  *   DIAG             report actuator readiness and the selected pattern
  *
  * Returns true when the line was a diagnostic (response written). */
@@ -269,6 +275,31 @@ static bool handle_diagnostic(const char *line, char *out, size_t out_cap) {
              cue_ble_has_central()
                  ? (cue_ble_is_connected() ? "subscribed" : "connected")
                  : "advertising");
+    return true;
+  }
+  /* RFC 0007 D2. Wired-port only, like TONE: the A/B this enables is a bench
+   * comparison, and a drive topology reachable over BLE could be changed
+   * mid-ride, which would make a ride's cues incomparable with each other. */
+  if (strncmp(line, "DRIVE", 5) == 0 &&
+      (line[5] == '\0' || line[5] == ' ')) {
+    if (line[5] == ' ') {
+      const char *p = line + 6;
+      char *end = NULL;
+      unsigned long mode = strtoul(p, &end, 10);
+      if (end == p || *end != '\0' || mode >= CUE_DRIVE_MODE_COUNT) {
+        snprintf(out, out_cap, "ERR malformed DRIVE");
+        return true;
+      }
+      cue_actuator_set_drive_mode((uint8_t)mode);
+    } else {
+      cue_actuator_next_drive_mode();
+    }
+    /* Naming the topology beats printing an index: a capture that says
+     * "differential" is readable months later without this source open. */
+    snprintf(out, out_cap, "OK drive %u %s", (unsigned)cue_actuator_drive_mode(),
+             cue_actuator_drive_mode() == (uint8_t)CUE_DRIVE_DIFFERENTIAL
+                 ? "differential"
+                 : "single");
     return true;
   }
   if (strncmp(line, "TONE ", 5) == 0) {

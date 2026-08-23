@@ -95,6 +95,44 @@ void cue_actuator_set_status(CueActuatorStatus status);
  * immediately, and nothing here can be triggered from a ride. */
 void cue_actuator_tone(uint16_t hz, uint16_t ms);
 
+/* --- drive topology (RFC 0007 D2) ---------------------------------------- */
+
+/* How the piezo is driven. The axis RFC 0007 D2 exists to measure: a piezo is
+ * voltage-driven, so doubling the swing across the element is a larger lever
+ * on loudness than diaphragm area.
+ *
+ * SINGLE reproduces the WuKong's topology exactly — one pin swinging 0..3V3
+ * against a grounded return. DIFFERENTIAL drives the second leg in antiphase
+ * from the same PWM slice, so the element sees ±3V3: twice the swing, ~+6 dB,
+ * for one GPIO and no boost converter.
+ *
+ * Runtime-switchable on purpose. #154's operator requirement was candidates
+ * "comparable back-to-back without reflashing", and that applies harder here:
+ * the element, its mounting, and the room are held constant while ONLY the
+ * drive topology changes, which is the one-axis discipline of D7 applied to
+ * the thing D7 could not vary.
+ *
+ * REQUIRES AN EXTERNAL ELEMENT across CUE_PIN_BUZZER and CUE_PIN_BUZZER_N.
+ * The WuKong's onboard buzzer cannot be driven this way — its return is the
+ * board's ground plane, so it has no second leg to drive. Selecting
+ * DIFFERENTIAL with the onboard buzzer changes nothing audible, which is a
+ * result that looks exactly like "differential drive does not help". Read
+ * RFC 0007 D2 before running the comparison.
+ */
+typedef enum {
+  CUE_DRIVE_SINGLE = 0,       /* one pin against ground — the WuKong topology */
+  CUE_DRIVE_DIFFERENTIAL = 1, /* two pins in antiphase — needs an external element */
+} CueDriveMode;
+
+#define CUE_DRIVE_MODE_COUNT 2u
+
+uint8_t cue_actuator_drive_mode(void);
+/* Ignores an out-of-range value rather than clamping: silently substituting a
+ * topology would make an A/B comparison lie about what was driven. */
+void cue_actuator_set_drive_mode(uint8_t mode);
+/* Advance to the next topology, wrapping. Returns the new mode. */
+uint8_t cue_actuator_next_drive_mode(void);
+
 /* Force the LEDs to `rgb` for `ms` — separates "the LED code is wrong"
  * from "the pixels or the pin are wrong" during bring-up. */
 void cue_actuator_led_probe(uint32_t rgb, uint16_t ms);
