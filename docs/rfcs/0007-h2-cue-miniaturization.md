@@ -71,10 +71,30 @@ Supporting evidence already in the tree, from `mcu/pico-cue/README.md`:
 powered over USB with the WuKong switched off, "the LEDs stay dark and the
 **buzzer is weak**." Drive rail visibly dominates on the current hardware.
 
-**The differential-drive experiment is testable on the WuKong today**, with
-no new hardware and no H2 — it is a firmware change plus a second pin. It
-should run before the miniaturization does, because it is the lever that
-decides whether miniaturization is affordable at all.
+**The differential-drive experiment needs an external element, and this
+document originally said otherwise.** The first draft claimed it was testable
+on the WuKong "with no new hardware — a firmware change plus a second pin."
+That is wrong, and the error is worth leaving visible because it is the same
+class this RFC is about.
+
+Differential drive requires access to **both** terminals of the piezo. The
+WuKong's onboard buzzer is reached from GP9 and its return is, on every
+ordinary carrier layout, the board's ground plane. Elecfreaks publishes no
+schematic and their wiki does not state the second terminal, so this is not
+even confirmable from documentation — it was assumed from a pin number.
+
+What the experiment actually costs: a bare piezo element and two jumpers to
+two GPIOs. Cheap, and still no H2 and no enclosure — but it is new hardware,
+and the **onboard buzzer cannot be the device under test**. Nothing done in
+firmware alone raises the voltage swing across a part with one terminal
+soldered to ground; duty and frequency are already spanned by D7's
+candidates.
+
+**Settle the premise first, with a multimeter**: continuity between the
+buzzer's second terminal and GND. Thirty seconds, and it either confirms the
+assumption above or reopens the cheaper path. Recorded as a prerequisite
+rather than a footnote, because the whole D1/D2 sequence rests on the
+differential experiment being cheap enough to run before miniaturization.
 
 ### D3 — Every acoustic claim is measured on the board, never taken from a part
 
@@ -159,8 +179,9 @@ it.
 
 - **Nothing ships to the handlebar in a smaller box until D5's gate passes
   on the current one.** That is a schedule cost, accepted deliberately.
-- The differential-drive experiment (D2) becomes the next actionable piece
-  of work, and it needs no new hardware.
+- The differential-drive experiment (D2) becomes the next actionable piece of
+  work. It needs a bare piezo element and two jumpers — not the H2, not an
+  enclosure, but not nothing either, and not the onboard buzzer.
 - A second `mcu/` target appears (`mcu/h2-cue/`), and with it the first
   case of two firmware stacks compiling one kernel. D6's `_Static_assert`
   is what keeps that honest.
@@ -175,6 +196,10 @@ it.
 
 ## Open questions
 
+- **Is the WuKong buzzer's second terminal actually on the ground plane?**
+  Assumed above from a pin number, because Elecfreaks publishes no schematic.
+  A continuity check settles it, and a negative answer makes the D2
+  experiment cheaper than this RFC now claims.
 - Does the Waveshare Zero's PCB antenna hold a usable link from a handlebar,
   with a rider's body adjacent and a metal stem nearby? Unmeasured, and it
   gates the whole enclosure decision.
