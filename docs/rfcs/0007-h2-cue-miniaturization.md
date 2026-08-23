@@ -111,6 +111,56 @@ table. A part swap that changes the resonant peak silently re-tunes every
 candidate in `cue_pattern.c`, since five of the six name a carrier
 frequency.
 
+#### Measured 2026-08-23: the WuKong's own element does not peak at 2.3 kHz
+
+The rule was applied to the board already on the bench, before any part
+swap, and the datasheet number does not survive it.
+
+A coarse sweep (1200–4000 Hz) and two fine sweeps (100 Hz steps) put the
+loudest response at **2800 Hz**. Ordered sweeps judged by ear are exactly
+the kind of evidence this repo distrusts — a rising-pitch expectation
+produces the same shape as a real peak — so the result was confirmed
+double-blind:
+
+| Trial type | n | Result |
+| --- | --- | --- |
+| 2800 Hz vs 2300 Hz, order randomised per trial | 4 | **4/4 chose 2800** |
+| Catch trials (identical pair, listener not told) | 2 | **2/2 called "same"** |
+
+The listener did not know which trials were which, and neither did the
+author until the answers were in — the key was written to a file and read
+back only for scoring. One real trial had the presentation order reversed
+and the answer followed the frequency rather than the position. The catch
+trials are what make the rest worth anything: a listener who called a
+winner on an identical pair would have shown the four real trials to be
+response bias, which is D5's must-diverge principle pointed at a human
+instead of a comparator.
+
+**This result is independent of the bench's unresolved supply question.**
+Both tones in every trial played under identical power, so a starved buzzer
+scales both equally; the comparison is relative and survives whatever the
+WuKong's power switch was doing.
+
+What it does **not** establish: that 2800 Hz is the exact peak. Only
+2800-vs-2300 was blind-tested; the sweeps that suggested 2800 were ordered
+and are weaker evidence. The peak is somewhere near 2800, not at 2300, and
+a 50 Hz claim would be false precision. Nor is any of it an SPL figure —
+this is one listener, one room, one session, comparing rather than
+measuring.
+
+**The consequence lands outside this RFC.** Candidates 0, 2 and 4 in
+`cue_pattern.c` name carriers chosen around the assumed ~2.3 kHz:
+`triple-2k3`, `low-1k2`, and `sweep`'s 1600 → 2300 → 3000 ramp — `sweep`
+being the current provisional default. D7's bench comparison on 2026-08-01
+therefore judged *rhythm* while *pitch* was an uncontrolled variable
+underneath it, and the winner was picked at a frequency the element does
+not favour.
+
+Re-tuning the table is **not** proposed here. D7 says the default is chosen
+by comparison on a bike, and changing the carriers changes what every
+candidate means; that is a decision for RFC 0006's owner, on a re-run
+comparison, not a side effect of this RFC's bring-up work.
+
 ### D4 — The battery gauge is wired before the first ride, not after
 
 RFC 0006's D5 battery criterion had to be **replaced** (#165) because the
@@ -196,6 +246,11 @@ it.
 
 ## Open questions
 
+- **Where exactly does the element peak, and does re-tuning the carriers
+  change which candidate wins?** 2800 Hz beat 2300 Hz double-blind (D3), but
+  the peak is bracketed, not located, and D7's comparison has never been run
+  with pitch controlled. This is the open question with the largest claim
+  attached to it, and it belongs to RFC 0006 rather than here.
 - **Is the WuKong buzzer's second terminal actually on the ground plane?**
   Assumed above from a pin number, because Elecfreaks publishes no schematic.
   A continuity check settles it, and a negative answer makes the D2
