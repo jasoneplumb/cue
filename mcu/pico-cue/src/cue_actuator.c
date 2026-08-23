@@ -28,8 +28,18 @@
  * wrap and clkdiv and are phase-locked by construction — antiphase is one
  * polarity bit, with no software synchronisation to drift.
  *
- * CANDIDATE: nothing has established that GP8 is free on a WuKong 2040.
- * Elecfreaks publishes no schematic. Verify before wiring. */
+ * MEASURED 2026-08-23, and GP8 is NOT free on a WuKong 2040. Driving it alone
+ * (CUE_DRIVE_N_ONLY, with GP9 parked low) produces an audible sound — but a
+ * blind A/B found differential indistinguishable from single-ended, 3/3, with
+ * sensitivity controls passing 3/3 in the same session. Both results together
+ * say GP8 reaches something that makes noise and it is NOT the buzzer
+ * element; the WuKong's motor and servo interfaces are the obvious suspects.
+ *
+ * So this pin is wrong for a shipping differential drive on this carrier: it
+ * would drive an unrelated peripheral every time a cue fired. It is retained
+ * because the slice-pairing argument above is what matters for the topology,
+ * and an external element wired to GP8/GP9 still works — but on the WuKong,
+ * GP8 must be treated as occupied until someone traces where it goes. */
 #define CUE_PIN_BUZZER_N 8u
 #define CUE_PIN_LEDS 22u
 #define CUE_LED_COUNT 2u
@@ -96,24 +106,42 @@ static uint32_t probe_led_end_ms;
 
 static uint32_t now_ms(void) { return to_ms_since_boot(get_absolute_time()); }
 
-/* Point the negative leg at whatever the current topology wants.
+/* Drive both legs for the current topology. One function so the two channel
+ * levels and the polarity bit are always decided together — they were split
+ * before, and a topology whose legs are set in two places is a topology that
+ * can be half-applied.
  *
- * SINGLE: level 0 with no inversion, so the leg sits at a hard low and the
- * element sees exactly the grounded-return topology the WuKong has.
+ * SINGLE:       P swings, N parked low. The WuKong's own arrangement.
+ * DIFFERENTIAL: both swing, N inverted, so the element sees twice the swing.
+ * N_ONLY:       P parked low, N swings. A bench probe, not a topology —
+ *               see the header.
  *
- * DIFFERENTIAL: half duty WITH the channel inverted, so it is the exact
- * complement of the positive leg. The inversion must be cleared again in
- * SINGLE mode — an inverted channel parked at level 0 outputs a constant
- * HIGH, which would leave DC across the element instead of grounding it.
- * That mistake is silent and would slowly cook a piezo. */
-static void buzzer_leg_n(uint16_t hz) {
-  const bool differential = (drive_mode == (uint8_t)CUE_DRIVE_DIFFERENTIAL);
-  const bool invert_a = differential && (buzzer_channel_n == PWM_CHAN_A);
-  const bool invert_b = differential && (buzzer_channel_n == PWM_CHAN_B);
+ * The polarity bit must be CLEARED whenever N is not the inverted leg. An
+ * inverted channel parked at level 0 outputs a constant HIGH, which leaves DC
+ * across the element instead of grounding it: silent, and it would slowly
+ * cook a piezo. */
+static void buzzer_drive(uint16_t hz) {
+  const bool on = (hz != 0u);
+  bool p_on, n_on, n_invert;
 
-  pwm_set_output_polarity(buzzer_slice, invert_a, invert_b);
-  pwm_set_chan_level(buzzer_slice, buzzer_channel_n,
-                     (differential && hz != 0u) ? CUE_PWM_HALF : 0u);
+  switch (drive_mode) {
+    case (uint8_t)CUE_DRIVE_DIFFERENTIAL:
+      p_on = on; n_on = on; n_invert = true;
+      break;
+    case (uint8_t)CUE_DRIVE_N_ONLY:
+      p_on = false; n_on = on; n_invert = false;
+      break;
+    case (uint8_t)CUE_DRIVE_SINGLE:
+    default:
+      p_on = on; n_on = false; n_invert = false;
+      break;
+  }
+
+  pwm_set_output_polarity(buzzer_slice,
+                          n_invert && (buzzer_channel_n == PWM_CHAN_A),
+                          n_invert && (buzzer_channel_n == PWM_CHAN_B));
+  pwm_set_chan_level(buzzer_slice, buzzer_channel, p_on ? CUE_PWM_HALF : 0u);
+  pwm_set_chan_level(buzzer_slice, buzzer_channel_n, n_on ? CUE_PWM_HALF : 0u);
 }
 
 static void buzzer_set(uint16_t hz) {
@@ -124,8 +152,7 @@ static void buzzer_set(uint16_t hz) {
   current_hz = hz;
   drive_mode_dirty = false;
   if (hz == 0u) {
-    pwm_set_chan_level(buzzer_slice, buzzer_channel, 0u);
-    buzzer_leg_n(0u);
+    buzzer_drive(0u);
     return;
   }
   /* divider = clk_sys / (hz * (wrap + 1)), in 8.4 fixed point. */
@@ -136,8 +163,7 @@ static void buzzer_set(uint16_t hz) {
     div = 255.0f;
   }
   pwm_set_clkdiv(buzzer_slice, div);
-  pwm_set_chan_level(buzzer_slice, buzzer_channel, CUE_PWM_HALF);
-  buzzer_leg_n(hz);
+  buzzer_drive(hz);
 }
 
 static uint32_t scale_rgb(uint32_t rgb, uint32_t pct) {

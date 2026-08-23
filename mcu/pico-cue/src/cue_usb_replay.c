@@ -240,11 +240,13 @@ void cue_usb_replay_handle_line(const char *line, char *out, size_t out_cap) {
  *   LEDS <rrggbb>,<ms>  force a colour — separates "LED code is wrong"
  *                    from "pin or pixels are wrong"
  *   DRIVE [<mode>]   piezo drive topology (RFC 0007 D2): 0 single, 1
- *                    differential; bare DRIVE toggles. Needs an EXTERNAL
- *                    element across GP9/GP8 — the onboard buzzer's return is
- *                    the ground plane, so differential does nothing audible
- *                    on it, and that null result is indistinguishable from
- *                    "the idea does not work"
+ *                    differential, 2 n-only probe; bare DRIVE cycles.
+ *                    Differential needs an EXTERNAL element across GP9/GP8
+ *                    unless mode 2 shows otherwise — mode 2 exists to settle
+ *                    whether GP8 reaches the onboard element at all, since
+ *                    this board's buzzer has no reachable rear terminal to
+ *                    put a meter on. Always run mode 0 first as a control:
+ *                    a silent mode 2 means nothing if mode 0 was silent too
  *   DIAG             report actuator readiness and the selected pattern
  *
  * Returns true when the line was a diagnostic (response written). */
@@ -296,10 +298,10 @@ static bool handle_diagnostic(const char *line, char *out, size_t out_cap) {
     }
     /* Naming the topology beats printing an index: a capture that says
      * "differential" is readable months later without this source open. */
+    static const char *const names[CUE_DRIVE_MODE_COUNT] = {
+        "single", "differential", "n-only-probe"};
     snprintf(out, out_cap, "OK drive %u %s", (unsigned)cue_actuator_drive_mode(),
-             cue_actuator_drive_mode() == (uint8_t)CUE_DRIVE_DIFFERENTIAL
-                 ? "differential"
-                 : "single");
+             names[cue_actuator_drive_mode()]);
     return true;
   }
   if (strncmp(line, "TONE ", 5) == 0) {

@@ -122,9 +122,38 @@ void cue_actuator_tone(uint16_t hz, uint16_t ms);
 typedef enum {
   CUE_DRIVE_SINGLE = 0,       /* one pin against ground — the WuKong topology */
   CUE_DRIVE_DIFFERENTIAL = 1, /* two pins in antiphase — needs an external element */
+  /* BENCH PROBE, not a topology to ship. Drives the N leg alone with the P
+   * leg parked low, to answer one question the multimeter cannot reach on
+   * this board: is the onboard buzzer's second terminal connected to GP8, or
+   * to the ground plane?
+   *
+   * Measured 2026-08-23: the buzzer is mounted with no accessible rear
+   * terminal, so RFC 0007's continuity check is physically impossible here
+   * and this is the substitute.
+   *
+   * Reading it — and the control is not optional:
+   *   SINGLE audible, N_ONLY silent  -> GP8 does not reach the element.
+   *                                     Consistent with a grounded return;
+   *                                     differential needs an external part.
+   *   SINGLE audible, N_ONLY audible -> GP8 reaches SOMETHING audible. It does
+   *                                     NOT follow that it reaches the
+   *                                     element — see below.
+   *   SINGLE silent                  -> the rig is broken, not the theory.
+   *                                     N_ONLY's result means nothing. Run
+   *                                     the control FIRST, every time.
+   *
+   * RESULT on this bench, 2026-08-23: both audible — and yet a blind A/B put
+   * differential at 3/3 "no difference" against single, with sensitivity
+   * controls at 3/3 in the same session. The probe alone would have said GP8
+   * drives the element. It does not. This mode answers "does driving GP8 make
+   * noise", which is a WEAKER question than "does GP8 move the element", and
+   * the two came apart on real hardware. Do not read a positive N_ONLY as
+   * proof of connection to the buzzer.
+   */
+  CUE_DRIVE_N_ONLY = 2,
 } CueDriveMode;
 
-#define CUE_DRIVE_MODE_COUNT 2u
+#define CUE_DRIVE_MODE_COUNT 3u
 
 uint8_t cue_actuator_drive_mode(void);
 /* Ignores an out-of-range value rather than clamping: silently substituting a
