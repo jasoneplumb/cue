@@ -142,13 +142,16 @@ typedef enum {
    *                                     N_ONLY's result means nothing. Run
    *                                     the control FIRST, every time.
    *
-   * RESULT on this bench, 2026-08-23: both audible — and yet a blind A/B put
-   * differential at 3/3 "no difference" against single, with sensitivity
-   * controls at 3/3 in the same session. The probe alone would have said GP8
-   * drives the element. It does not. This mode answers "does driving GP8 make
-   * noise", which is a WEAKER question than "does GP8 move the element", and
-   * the two came apart on real hardware. Do not read a positive N_ONLY as
-   * proof of connection to the buzzer.
+   * RESULT on this bench, 2026-08-23: the probe was reported audible, and yet
+   * a blind A/B put differential at 3/3 "no difference" against single, with
+   * sensitivity controls at 3/3 in the same session. The blind result is the
+   * one to trust — GP8 does not drive the onboard element.
+   *
+   * Read that asymmetry carefully, because it is the lesson. This mode is
+   * UNBLINDED and answers "did you hear something", a weaker question than
+   * "does GP8 move the element". When it disagrees with a controlled blind
+   * result, it loses. It is a cheap first look, not evidence, and a positive
+   * here is never proof of connection to the buzzer.
    */
   CUE_DRIVE_N_ONLY = 2,
 } CueDriveMode;

@@ -28,18 +28,22 @@
  * wrap and clkdiv and are phase-locked by construction — antiphase is one
  * polarity bit, with no software synchronisation to drift.
  *
- * MEASURED 2026-08-23, and GP8 is NOT free on a WuKong 2040. Driving it alone
- * (CUE_DRIVE_N_ONLY, with GP9 parked low) produces an audible sound — but a
- * blind A/B found differential indistinguishable from single-ended, 3/3, with
- * sensitivity controls passing 3/3 in the same session. Both results together
- * say GP8 reaches something that makes noise and it is NOT the buzzer
- * element; the WuKong's motor and servo interfaces are the obvious suspects.
+ * MEASURED 2026-08-23: GP8 does not drive the onboard buzzer. A blind A/B put
+ * differential at 3/3 "no difference" against single-ended, with sensitivity
+ * controls passing 3/3 in the same session — so the null is real, not an
+ * insensitive listener. The onboard element's return is not this pin.
  *
- * So this pin is wrong for a shipping differential drive on this carrier: it
- * would drive an unrelated peripheral every time a cue fired. It is retained
- * because the slice-pairing argument above is what matters for the topology,
- * and an external element wired to GP8/GP9 still works — but on the WuKong,
- * GP8 must be treated as occupied until someone traces where it goes. */
+ * GP8 is broken out to one of the WuKong's general-purpose IO expansion
+ * headers, so it is free for an external element.
+ *
+ * Corrected the same day, and the mistake is worth keeping: an earlier
+ * revision of this comment claimed GP8 was NOT free and probably reached a
+ * motor or servo. That came from a single UNBLINDED yes/no — the N_ONLY probe
+ * was reported audible — and the conclusion was built to make that report and
+ * the blind result both true. The blind result was the trustworthy one; the
+ * unblinded probe should have been discarded, not explained. Inventing a
+ * peripheral to reconcile weak evidence with strong evidence is how a
+ * datasheet-grade claim gets into a comment nobody re-checks. */
 #define CUE_PIN_BUZZER_N 8u
 #define CUE_PIN_LEDS 22u
 #define CUE_LED_COUNT 2u
