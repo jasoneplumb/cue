@@ -4,6 +4,13 @@
 - **Date:** 2026-08-22
 - **Tracking:** #27
 
+> **Reading the decision references.** A bare `D<n>` in this document always
+> means *this* RFC's own decision. Every reference to another record is
+> qualified — `RFC 0006 D7`, `benchseed D5`. The first draft mixed the two,
+> and five of the resulting collisions were real: RFC 0006 and RFC 0007 both
+> have a D1, D5, D6 and D7, and they are unrelated in each case. If you add a
+> cross-reference here, qualify it.
+
 ## Context
 
 RFC 0006 put a cue device on the handlebar: a Pico W in an Elecfreaks
@@ -18,7 +25,7 @@ RFC exists mostly to say why.
 
 **The thing RFC 0006 was built to fix is not yet confirmed fixed.** Two
 delivery channels already failed on perceptibility — the 0004 triple-tap
-haptic (masked by handlebar and road vibration) and the 0005 chime. D1
+haptic (masked by handlebar and road vibration) and the 0005 chime. RFC 0006 D1
 chose the WuKong because it is "loud and bright by construction." Three
 facts from the current tree say that claim is still open:
 
@@ -27,7 +34,7 @@ facts from the current tree say that claim is still open:
   selected on a bench comparison, 2026-08-01.
 - `docs/results.md` reports **7 of 33 graded cues as `unrecognized`** —
   explicitly "a delivery/perceptibility outcome, not a policy one."
-- The D5 field acceptance gate is unmet. It requires ≥3 rides, zero shadow
+- RFC 0006's D5 field acceptance gate is unmet. It requires ≥3 rides, zero shadow
   divergences, every shadow `HEAD_UP` actuated, **the rider reporting
   perception of every cue**, and each ride on battery with USB absent.
 
@@ -36,15 +43,16 @@ actuator spends margin nobody has counted.
 
 ## Decisions
 
-### D1 — Sequencing: the D5 gate passes on the WuKong before anything shrinks
+### D1 — Sequencing: RFC 0006's D5 gate passes on the WuKong before anything shrinks
 
 | Option | Verdict | Why |
 | --- | --- | --- |
-| **Pass D5 on the Pico/WuKong first, then miniaturize against that baseline** | **Chosen** | D5 turns "loud enough" from a judgement into a recorded result. Miniaturization then has a reference to regress against, and a failure afterwards is attributable. |
+| **Pass RFC 0006 D5 on the Pico/WuKong first, then miniaturize against that baseline** | **Chosen** | That gate turns "loud enough" from a judgement into a recorded result. Miniaturization then has a reference to regress against, and a failure afterwards is attributable. |
 | Build the H2 device now and validate once, on the small hardware | Rejected | Changes MCU, BLE stack, supply rail, buzzer size, and enclosure simultaneously. If the rider stops hearing cues, the evidence cannot say which change did it — and one of the candidates is "the whole approach", which would be a false negative on RFC 0006 itself. |
 | Skip the gate; treat 15/15 actuations as sufficient | Rejected | `actuated` is a firmware-side flag: it records that the GPIO was driven, not that a human heard anything. The 7 `unrecognized` grades are the counter-evidence, from the only instrument that matters. |
 
-This is D7's own method applied one level up. D7 varies **one** axis per
+This is RFC 0006 D7's own method applied one level up. RFC 0006 D7 varies
+**one** axis per
 candidate "so a preference is attributable to something specific rather
 than to 'it felt different'." A miniaturization that moves five axes at
 once abandons that discipline at exactly the moment it is most needed.
@@ -87,7 +95,7 @@ What the experiment actually costs: a bare piezo element and two jumpers to
 two GPIOs. Cheap, and still no H2 and no enclosure — but it is new hardware,
 and the **onboard buzzer cannot be the device under test**. Nothing done in
 firmware alone raises the voltage swing across a part with one terminal
-soldered to ground; duty and frequency are already spanned by D7's
+soldered to ground; duty and frequency are already spanned by RFC 0006 D7's
 candidates.
 
 **Settle the premise first, with a multimeter**: continuity between the
@@ -133,7 +141,7 @@ back only for scoring. One real trial had the presentation order reversed
 and the answer followed the frequency rather than the position. The catch
 trials are what make the rest worth anything: a listener who called a
 winner on an identical pair would have shown the four real trials to be
-response bias, which is D5's must-diverge principle pointed at a human
+response bias, which is benchseed D5's must-diverge principle pointed at a human
 instead of a comparator.
 
 **This result is independent of the bench's unresolved supply question.**
@@ -151,12 +159,12 @@ measuring.
 **The consequence lands outside this RFC.** Candidates 0, 2 and 4 in
 `cue_pattern.c` name carriers chosen around the assumed ~2.3 kHz:
 `triple-2k3`, `low-1k2`, and `sweep`'s 1600 → 2300 → 3000 ramp — `sweep`
-being the current provisional default. D7's bench comparison on 2026-08-01
+being the current provisional default. RFC 0006 D7's bench comparison on 2026-08-01
 therefore judged *rhythm* while *pitch* was an uncontrolled variable
 underneath it, and the winner was picked at a frequency the element does
 not favour.
 
-Re-tuning the table is **not** proposed here. D7 says the default is chosen
+Re-tuning the table is **not** proposed here. RFC 0006 D7 says the default is chosen
 by comparison on a bike, and changing the carriers changes what every
 candidate means; that is a decision for RFC 0006's owner, on a re-run
 comparison, not a side effect of this RFC's bring-up work.
@@ -195,8 +203,8 @@ otherwise — the interesting risks are acoustic and mechanical.
 
 | Piece | Disposition |
 | --- | --- |
-| `kernel/cue_policy.c` | Compiles unmodified (C99), per RFC 0003 D3's no-mirror rule. The `_Static_assert(sizeof(CuePolicyState) == 420)` tripwire **must be re-measured** under `riscv64-zephyr-elf` — D6's compiler-width caveat, now exercised against a third ABI |
-| `mcu/shared/cue_wire.h` | Unchanged. Both RV32 and Cortex-M0+ are little-endian, which is exactly what D3's packed, field-by-field encoding was chosen to buy |
+| `kernel/cue_policy.c` | Compiles unmodified (C99), per RFC 0003 D3's no-mirror rule. The `static_assert(sizeof(CuePolicyState) == 420)` tripwire **must be re-measured** under `riscv64-zephyr-elf` — RFC 0006 D6's compiler-width caveat, now exercised against a third ABI |
+| `mcu/shared/cue_wire.h` | Unchanged. Both RV32 and Cortex-M0+ are little-endian, which is exactly what RFC 0006 D3's packed, field-by-field encoding was chosen to buy |
 | `cue_ble.c` | **Rewritten.** BTstack → Zephyr `bt_gatt`. The GATT layout (CONTROL/STEP/DECISION/STATUS) and every opcode carry over unchanged; only the binding to the stack is new |
 | Buzzer PWM | `ledc0` + `CONFIG_PWM=y`. Direct replacement for `hardware/pwm.h` |
 | **WS2812B LEDs** | **The one real gap.** The H2 has no PIO, and the pinned Zephyr ships no RMT-based WS2812 driver. Available: `ws2812_spi.c`, `ws2812_i2s.c`, `ws2812_gpio.c`, `ws2812_uart.c`. **SPI is the correct choice** — GPIO bit-banging WS2812 timing while a BLE controller takes interrupts is a race, and `SPIM2_MOSI_GPIO8` exists in the H2 pinctrl header |
@@ -227,13 +235,13 @@ it.
 
 ## Consequences
 
-- **Nothing ships to the handlebar in a smaller box until D5's gate passes
+- **Nothing ships to the handlebar in a smaller box until RFC 0006's D5 gate passes
   on the current one.** That is a schedule cost, accepted deliberately.
 - The differential-drive experiment (D2) becomes the next actionable piece of
   work. It needs a bare piezo element and two jumpers — not the H2, not an
   enclosure, but not nothing either, and not the onboard buzzer.
 - A second `mcu/` target appears (`mcu/h2-cue/`), and with it the first
-  case of two firmware stacks compiling one kernel. D6's `_Static_assert`
+  case of two firmware stacks compiling one kernel. RFC 0006 D6's `static_assert`
   is what keeps that honest.
 - The LED channel gets weaker in the port, not stronger: SPI-driven WS2812
   costs a peripheral and a pin that the RP2040's PIO gave away for free.
@@ -248,7 +256,7 @@ it.
 
 - **Where exactly does the element peak, and does re-tuning the carriers
   change which candidate wins?** 2800 Hz beat 2300 Hz double-blind (D3), but
-  the peak is bracketed, not located, and D7's comparison has never been run
+  the peak is bracketed, not located, and RFC 0006 D7's comparison has never been run
   with pitch controlled. This is the open question with the largest claim
   attached to it, and it belongs to RFC 0006 rather than here.
 - **Is the WuKong buzzer's second terminal actually on the ground plane?**
