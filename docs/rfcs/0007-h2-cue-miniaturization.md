@@ -162,13 +162,12 @@ a 50 Hz claim would be false precision. Nor is any of it an SPL figure —
 this is one listener, one room, one session, comparing rather than
 measuring.
 
-**The consequence lands outside this RFC.** Candidates 0 and 4 in
-`cue_pattern.c` name carriers anchored to the assumed ~2.3 kHz:
-`triple-2k3` (fixed at 2300 Hz) and `sweep`'s 1600 → 2300 → 3000 ramp — `sweep`
-being the current provisional default. RFC 0006 D7's bench comparison on 2026-08-01
-therefore judged *rhythm* while *pitch* was an uncontrolled variable
-underneath it. `triple-2k3` was fixed 500 Hz below the measured 2800 Hz
-peak; `sweep`'s upper step (3000 Hz) is only ~7% above it, so the winner
+**The consequence lands outside this RFC.** Five of the six candidates in
+`cue_pattern.c` — all except `low-1k2` — use `CUE_HZ_RESONANT = 2300u` as
+their carrier. RFC 0006 D7's bench comparison on 2026-08-01 therefore judged
+*rhythm* while *pitch* was an uncontrolled variable underneath it, with the
+fixed-carrier candidates benchmarked 500 Hz below the measured 2800 Hz peak.
+`sweep`'s upper step (3000 Hz) is only ~7% above the peak, so the winner
 incidentally spans the measured resonance — but the comparison was never run
 with pitch controlled.
 
