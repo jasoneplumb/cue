@@ -36,7 +36,11 @@ facts from the current tree say that claim is still open:
   explicitly "a delivery/perceptibility outcome, not a policy one."
 - RFC 0006's D5 field acceptance gate is unmet. It requires ≥3 rides, zero shadow
   divergences, every shadow `HEAD_UP` actuated, **the rider reporting
-  perception of every cue**, and each ride on battery with USB absent.
+  perception of every cue**, each ride on battery with USB absent,
+  stream liveness (every streamed step answered by a `DECISION` report,
+  `reported_count`/`seq` contiguity verified to the final step), and at
+  least one mid-ride BLE disconnect surviving with no duplicate and no
+  stale cue.
 
 So the device's loudness margin is an unmeasured quantity. Shrinking the
 actuator spends margin nobody has counted.
@@ -70,10 +74,12 @@ diaphragm size. Two levers, neither of which costs meaningful current:
 | **Boosted rail** — 12–24 V into the element via a boost or a piezo driver IC (PAM8904 class) | one part | Large, and current draw stays small because the load is capacitive |
 
 A 12 mm element driven differentially at 12 V will beat a 30 mm element
-driven single-ended at 3.3 V. The pinned Zephyr already has what the first
-lever needs: `mcpwm0` (`espressif,esp32-mcpwm`, complementary outputs with
-dead-time) and `ledc0`, with drivers `pwm_mc_esp32.c` and
-`pwm_led_esp32.c`.
+driven single-ended at 3.3 V. The H2's only PWM peripheral is `ledc0`
+(`pwm_led_esp32.c`); MCPWM (`espressif,esp32-mcpwm`, complementary outputs
+with hardware dead-time) is present on ESP32/S2/S3 but not on H2. LEDC can
+drive two antiphase channels in software, but provides no hardware dead-time
+— differential drive on H2 therefore requires an external half-bridge or
+gate-driver IC, as the table already notes.
 
 Supporting evidence already in the tree, from `mcu/pico-cue/README.md`:
 powered over USB with the WuKong switched off, "the LEDs stay dark and the
