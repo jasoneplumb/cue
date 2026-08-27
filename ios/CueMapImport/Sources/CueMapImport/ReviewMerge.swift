@@ -1,5 +1,5 @@
 // Intent: Merge a map-grading reviews sidecar (webmap.dev#239's "Export
-//         reviews" download) into a schema-v1 ride trace's reviews[]
+//         reviews" download) into a schema-v1 or v2 ride trace's reviews[]
 //         (FR-008) — the trace stays the single source of truth, so
 //         replay and tuning tooling see the grades with zero changes.
 //         Semantics: overwrite, latest wins — an incoming review replaces
