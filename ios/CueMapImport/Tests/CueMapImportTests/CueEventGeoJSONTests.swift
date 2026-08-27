@@ -293,6 +293,7 @@ final class CueEventGeoJSONTests: XCTestCase {
         let events = try CueEventGeoJSON.decodeTrace(data)
         XCTAssertEqual(events.cues.count, 1)
         XCTAssertEqual(events.cues[0].eventID, 101)
+        XCTAssertEqual(events.cues[0].evidence?.segmentID, 7)
         XCTAssertEqual(events.cues[0].outcome, "too_late")
     }
 

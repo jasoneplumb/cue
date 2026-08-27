@@ -61,8 +61,11 @@ public enum CueReviewMerge {
     /// route memory; v2 (RFC 0002 D6) adds personal_memory[], a field
     /// this tool neither reads nor rewrites. Every trace the phone has
     /// recorded since RideTraceRecorder started stamping 2 is a v2 trace,
-    /// so refusing it stranded the whole grading round trip.
-    public static let supportedSchemaVersions: Set<Int> = [1, 2]
+    /// so refusing it stranded the whole grading round trip. References
+    /// `CueEventGeoJSON.supportedSchemaVersions` so both halves of the
+    /// grading round trip always accept the same trace versions.
+    public static let supportedSchemaVersions: Set<Int> =
+        CueEventGeoJSON.supportedSchemaVersions
 
     /// What the merge did — the CLI's one-line report.
     public struct Summary: Equatable, Sendable {

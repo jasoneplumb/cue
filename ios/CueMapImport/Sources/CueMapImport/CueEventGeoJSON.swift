@@ -1,7 +1,7 @@
 // Intent: GeoJSON export of one ride's cue events and rider markers for
 //         map-overlay consumption (webmap.dev#231, GPS: webmap.dev#236):
 //         one Point feature per fired HEAD_UP cue or rider marker, joined
-//         from the schema-v1 trace, the optional dispatch-latency sidecar,
+//         from a schema-v1 or v2 trace, the optional dispatch-latency sidecar,
 //         and the imported segment geometry. The policy trace carries no
 //         GPS by default (NFR-005), so each point is its matched segment's
 //         along-length midpoint, flagged `approx: true` — "somewhere on
