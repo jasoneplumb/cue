@@ -122,7 +122,7 @@ differential experiment being cheap enough to run before miniaturization.
 Any candidate element is swept with `cue_actuator_tone()` and measured at a
 fixed distance against the WuKong baseline before it enters a pattern
 table. A part swap that changes the resonant peak silently re-tunes every
-candidate in `cue_pattern.c`, since five of the six name a carrier
+candidate in `cue_pattern.c`, since all six name a carrier
 frequency.
 
 #### Measured 2026-08-23: the WuKong's own element does not peak at 2.3 kHz
@@ -162,13 +162,15 @@ a 50 Hz claim would be false precision. Nor is any of it an SPL figure —
 this is one listener, one room, one session, comparing rather than
 measuring.
 
-**The consequence lands outside this RFC.** Candidates 0, 2 and 4 in
-`cue_pattern.c` name carriers chosen around the assumed ~2.3 kHz:
-`triple-2k3`, `low-1k2`, and `sweep`'s 1600 → 2300 → 3000 ramp — `sweep`
+**The consequence lands outside this RFC.** Candidates 0 and 4 in
+`cue_pattern.c` name carriers anchored to the assumed ~2.3 kHz:
+`triple-2k3` (fixed at 2300 Hz) and `sweep`'s 1600 → 2300 → 3000 ramp — `sweep`
 being the current provisional default. RFC 0006 D7's bench comparison on 2026-08-01
 therefore judged *rhythm* while *pitch* was an uncontrolled variable
-underneath it, and the winner was picked at a frequency the element does
-not favour.
+underneath it. `triple-2k3` was fixed 500 Hz below the measured 2800 Hz
+peak; `sweep`'s upper step (3000 Hz) is only ~7% above it, so the winner
+incidentally spans the measured resonance — but the comparison was never run
+with pitch controlled.
 
 Re-tuning the table is **not** proposed here. RFC 0006 D7 says the default is chosen
 by comparison on a bike, and changing the carriers changes what every
