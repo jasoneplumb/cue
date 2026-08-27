@@ -1,5 +1,5 @@
 // Intent: Merge a map-grading reviews sidecar (webmap.dev#239's "Export
-//         reviews" download) into a schema-v1 ride trace's reviews[]
+//         reviews" download) into a schema-v1 or v2 ride trace's reviews[]
 //         (FR-008) — the trace stays the single source of truth, so
 //         replay and tuning tooling see the grades with zero changes.
 //         Semantics: overwrite, latest wins — an incoming review replaces
@@ -33,7 +33,7 @@ public enum CueReviewMergeError: Error, Equatable, CustomStringConvertible {
     public var description: String {
         switch self {
         case .unsupportedSchemaVersion(let version):
-            return "trace schema_version \(version) is not supported (expected 1)"
+            return "trace schema_version \(version) is not supported (expected 1 or 2)"
         case .malformedTrace(let reason):
             return "malformed trace: \(reason)"
         case .malformedSidecar(let reason):
@@ -57,6 +57,16 @@ public enum CueReviewMergeError: Error, Equatable, CustomStringConvertible {
 }
 
 public enum CueReviewMerge {
+    /// Trace schema versions this merge can read. v1 predates personal
+    /// route memory; v2 (RFC 0002 D6) adds personal_memory[], a field
+    /// this tool neither reads nor rewrites. Every trace the phone has
+    /// recorded since RideTraceRecorder started stamping 2 is a v2 trace,
+    /// so refusing it stranded the whole grading round trip. References
+    /// `CueEventGeoJSON.supportedSchemaVersions` so both halves of the
+    /// grading round trip always accept the same trace versions.
+    public static let supportedSchemaVersions: Set<Int> =
+        CueEventGeoJSON.supportedSchemaVersions
+
     /// What the merge did — the CLI's one-line report.
     public struct Summary: Equatable, Sendable {
         /// Distinct incoming event ids applied (added + overwrote).
@@ -122,7 +132,12 @@ public enum CueReviewMerge {
         guard let version = root["schema_version"] as? Int else {
             throw CueReviewMergeError.malformedTrace("missing schema_version")
         }
-        guard version == 1 else {
+        // v2 adds personal_memory[] (RFC 0002 D6), which this merge never
+        // reads — it rewrites reviews[] and round-trips every other field
+        // through JSONSerialization untouched. So both versions are safe
+        // here; the guard exists to refuse a FUTURE version that might
+        // restructure cue_decisions or reviews out from under us.
+        guard CueReviewMerge.supportedSchemaVersions.contains(version) else {
             throw CueReviewMergeError.unsupportedSchemaVersion(version)
         }
         guard let decisions = root["cue_decisions"] as? [[String: Any]] else {

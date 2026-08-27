@@ -251,14 +251,50 @@ final class CueEventGeoJSONTests: XCTestCase {
     }
 
     func testUnsupportedSchemaVersionThrows() {
+        // 3 is unknown; 1 and 2 are both readable (see the v2 test below).
         let data = Data("""
-        {"schema_version": 2, "route_events": [], "cue_decisions": [],
+        {"schema_version": 3, "route_events": [], "cue_decisions": [],
          "markers": [], "reviews": []}
         """.utf8)
         XCTAssertThrowsError(try CueEventGeoJSON.decodeTrace(data)) { error in
             XCTAssertEqual(error as? CueEventExportError,
-                           .unsupportedSchemaVersion(2))
+                           .unsupportedSchemaVersion(3))
         }
+    }
+
+    func testSupportedSchemaVersionsSetsAreEqual() {
+        // Both halves of the grading round trip must accept the same traces.
+        // If either set gains a version the other doesn't, a ride can export
+        // to the map but its grades cannot be merged back (or vice versa).
+        XCTAssertEqual(CueEventGeoJSON.supportedSchemaVersions,
+                       CueReviewMerge.supportedSchemaVersions)
+    }
+
+    func testSchemaVersion2TraceDecodes() throws {
+        // The phone stamps 2 on every ride; refusing it meant no current
+        // ride could be exported to the map to be graded at all.
+        // personal_memory[] is present and simply ignored.
+        let data = Data("""
+        {"schema_version": 2,
+         "route_events": [
+           {"t_ms": 1000, "event_id": 101, "family": "COMPOSITE_SQUEEZE_ZONE",
+            "segment_id": 7, "severity": 200, "confidence": 165,
+            "reasons_bitmask": 7, "distance_to_start_m": 80,
+            "distance_to_end_m": 200}],
+         "cue_decisions": [
+           {"type": "HEAD_UP", "event_id": 101, "reason_code": 0,
+            "lead_time_s": 15, "t_ms": 1000}],
+         "personal_memory": [
+           {"segment_id": 7, "state": "NEUTRAL", "notice_bonus_s": 2,
+            "t_ms": 0}],
+         "markers": [],
+         "reviews": [{"event_id": 101, "outcome": "too_late"}]}
+        """.utf8)
+        let events = try CueEventGeoJSON.decodeTrace(data)
+        XCTAssertEqual(events.cues.count, 1)
+        XCTAssertEqual(events.cues[0].eventID, 101)
+        XCTAssertEqual(events.cues[0].evidence?.segmentID, 7)
+        XCTAssertEqual(events.cues[0].outcome, "too_late")
     }
 
     func testDecodeLatencySidecar() throws {

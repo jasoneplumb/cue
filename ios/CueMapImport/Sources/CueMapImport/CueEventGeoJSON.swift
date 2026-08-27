@@ -1,7 +1,7 @@
 // Intent: GeoJSON export of one ride's cue events and rider markers for
 //         map-overlay consumption (webmap.dev#231, GPS: webmap.dev#236):
 //         one Point feature per fired HEAD_UP cue or rider marker, joined
-//         from the schema-v1 trace, the optional dispatch-latency sidecar,
+//         from a schema-v1 or v2 trace, the optional dispatch-latency sidecar,
 //         and the imported segment geometry. The policy trace carries no
 //         GPS by default (NFR-005), so each point is its matched segment's
 //         along-length midpoint, flagged `approx: true` — "somewhere on
@@ -32,6 +32,12 @@ public enum CueEventExportError: Error, Equatable {
 }
 
 public enum CueEventGeoJSON {
+    /// Trace schema versions this export can read — see the guard in
+    /// `decodeTrace`. Kept in step with `CueReviewMerge`: the two halves
+    /// of the grading round trip must accept the same traces, or a ride
+    /// exports to the map but its grades cannot be merged back.
+    public static let supportedSchemaVersions: Set<Int> = [1, 2]
+
     // MARK: - Decoded inputs
 
     /// The trace subset this export consumes: fired cues with their zone
@@ -109,7 +115,7 @@ public enum CueEventGeoJSON {
         "useful", "false_alarm", "too_late", "too_early", "unrecognized",
     ]
 
-    /// Decode the trace subset from a schema-v1 ride trace
+    /// Decode the trace subset from a schema-v1 or v2 ride trace
     /// (replay_trace.schema.json). Joins each HEAD_UP decision to its
     /// zone evidence (the FIRST route-event observation carrying that
     /// event id — array order, deterministic) and its FR-008 review.
@@ -155,7 +161,12 @@ public enum CueEventGeoJSON {
             let outcome: String
         }
         let raw = try JSONDecoder().decode(RawTrace.self, from: data)
-        guard raw.schema_version == 1 else {
+        // v2 (RFC 0002 D6) only ADDS personal_memory[]; every field this
+        // export reads — cue_decisions, route_events, markers, reviews,
+        // samples — is unchanged from v1, and personal_memory is not one
+        // of them. Refusing v2 blocked exporting any ride the phone has
+        // recorded since the recorder began stamping 2.
+        guard Self.supportedSchemaVersions.contains(raw.schema_version) else {
             throw CueEventExportError.unsupportedSchemaVersion(raw.schema_version)
         }
         var evidenceByEventID: [UInt32: TraceEvents.ZoneEvidence] = [:]
