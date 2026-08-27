@@ -262,6 +262,14 @@ final class CueEventGeoJSONTests: XCTestCase {
         }
     }
 
+    func testSupportedSchemaVersionsSetsAreEqual() {
+        // Both halves of the grading round trip must accept the same traces.
+        // If either set gains a version the other doesn't, a ride can export
+        // to the map but its grades cannot be merged back (or vice versa).
+        XCTAssertEqual(CueEventGeoJSON.supportedSchemaVersions,
+                       CueReviewMerge.supportedSchemaVersions)
+    }
+
     func testSchemaVersion2TraceDecodes() throws {
         // The phone stamps 2 on every ride; refusing it meant no current
         // ride could be exported to the map to be graded at all.

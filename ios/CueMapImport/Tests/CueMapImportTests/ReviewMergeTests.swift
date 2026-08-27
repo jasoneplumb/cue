@@ -304,6 +304,7 @@ final class ReviewMergeTests: XCTestCase {
         XCTAssertEqual(summary, .init(merged: 1, added: 1, overwrote: 0))
         let reviews = try reviewsArray(of: merged)
         XCTAssertEqual(reviews.count, 1)
+        XCTAssertEqual(reviews[0]["event_id"] as? Int, 101)
         XCTAssertEqual(reviews[0]["outcome"] as? String, "too_late")
         let root = try XCTUnwrap(
             JSONSerialization.jsonObject(with: merged) as? [String: Any])

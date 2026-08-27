@@ -115,7 +115,7 @@ public enum CueEventGeoJSON {
         "useful", "false_alarm", "too_late", "too_early", "unrecognized",
     ]
 
-    /// Decode the trace subset from a schema-v1 ride trace
+    /// Decode the trace subset from a schema-v1 or v2 ride trace
     /// (replay_trace.schema.json). Joins each HEAD_UP decision to its
     /// zone evidence (the FIRST route-event observation carrying that
     /// event id — array order, deterministic) and its FR-008 review.
