@@ -66,7 +66,11 @@ public enum CueCustomZoneMerge {
             throw CueCustomZoneMergeError.malformedCustomZones(String(describing: error))
         }
         let matchResult = CustomZoneImport.matchSegments(for: features, segments: segments)
-        let matchedSegmentIDs = Set(matchResult.matches.values.flatMap { $0 })
+        // Directions are carried but not yet consulted here — gating a
+        // desk what-if needs the trace's own per-sample heading, which is
+        // cue#30 Phase 4. Until then a directional zone merges exactly as a
+        // bidirectional one does, i.e. as it did before cue#30.
+        let matchedSegmentIDs = Set(matchResult.directionsBySegment.keys)
 
         let jsonObject: Any
         do {

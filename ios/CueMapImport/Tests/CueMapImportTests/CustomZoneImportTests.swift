@@ -22,9 +22,11 @@ final class CustomZoneImportTests: XCTestCase {
 
     private func feature(id: String, coordinates: [[Double]],
                          label: String? = nil, createdAt: String = "2026-07-21T00:00:00.000Z",
-                         kind: String = "custom_zone") -> [String: Any] {
+                         kind: String = "custom_zone", directional: Any? = nil) -> [String: Any] {
         var properties: [String: Any] = ["kind": kind, "id": id, "created_at": createdAt]
         if let label { properties["label"] = label }
+        // Any, not Bool: the malformed cases need to plant a non-boolean here.
+        if let directional { properties["directional"] = directional }
         return [
             "type": "Feature",
             "geometry": ["type": "LineString", "coordinates": coordinates],
@@ -49,6 +51,28 @@ final class CustomZoneImportTests: XCTestCase {
         let data = featureCollectionJSON([feature(id: "zone-1", coordinates: [[0, 0], [0.001, 0]])])
         let features = try CustomZoneImport.parseFeatures(from: data)
         XCTAssertNil(features[0].label)
+    }
+
+    func testParsesDirectionalTrue() throws {
+        let data = featureCollectionJSON([
+            feature(id: "zone-1", coordinates: [[0, 0], [0.001, 0]], directional: true),
+        ])
+        XCTAssertTrue(try CustomZoneImport.parseFeatures(from: data)[0].directional)
+    }
+
+    func testAbsentDirectionalIsBidirectional() throws {
+        let data = featureCollectionJSON([feature(id: "zone-1", coordinates: [[0, 0], [0.001, 0]])])
+        XCTAssertFalse(try CustomZoneImport.parseFeatures(from: data)[0].directional)
+    }
+
+    func testThrowsWhenDirectionalIsPresentButNotABoolean() {
+        let bad = feature(id: "zone-1", coordinates: [[0, 0], [0.001, 0]], directional: "yes")
+        XCTAssertThrowsError(try CustomZoneImport.parseFeatures(from: featureCollectionJSON([bad]))) {
+            guard case .malformedFeature(_, let reason) = $0 as? CustomZoneImportError else {
+                return XCTFail("expected .malformedFeature")
+            }
+            XCTAssertTrue(reason.contains("directional"), reason)
+        }
     }
 
     func testAcceptsAnEmptyFeatureCollection() throws {
@@ -108,7 +132,7 @@ final class CustomZoneImportTests: XCTestCase {
         let features = [CustomZoneFeature(id: "zone-1", createdAt: "x", label: nil,
                                           coordinates: [[0.0005, 0.00001]])]  // ~1 m off the line
         let result = CustomZoneImport.matchSegments(for: features, segments: segments)
-        XCTAssertEqual(result.matches["zone-1"], [7])
+        XCTAssertEqual(result.matches["zone-1"], [7: .both])
         XCTAssertTrue(result.unmatchedZoneIDs.isEmpty)
     }
 
@@ -131,7 +155,7 @@ final class CustomZoneImportTests: XCTestCase {
         let features = [CustomZoneFeature(id: "zone-1", createdAt: "x", label: nil,
                                           coordinates: [[0.0005, 0.00001], [0.0025, 0.00001]])]
         let result = CustomZoneImport.matchSegments(for: features, segments: segments)
-        XCTAssertEqual(result.matches["zone-1"], [7, 8])
+        XCTAssertEqual(result.matches["zone-1"], [7: .both, 8: .both])
     }
 
     func testEmptySegmentsListLeavesEveryZoneUnmatched() {
@@ -139,6 +163,111 @@ final class CustomZoneImportTests: XCTestCase {
                                           coordinates: [[0, 0], [0.001, 0]])]
         let result = CustomZoneImport.matchSegments(for: features, segments: [])
         XCTAssertEqual(result.unmatchedZoneIDs, ["zone-1"])
+    }
+
+    // MARK: - matchSegments: direction (cue#30)
+
+    /// Node order runs east (bearing 90°), so a zone drawn west-to-east runs
+    /// WITH it and one drawn east-to-west runs against it. Vertices sit ~1 m
+    /// north of the line, well inside the snap radius.
+    private func eastwardSegment(id: UInt32 = 7) -> RoadSegment {
+        segment(id: id, from: (0, 0), to: (0, 0.001))
+    }
+
+    private func directionalZone(id: String, coordinates: [[Double]]) -> CustomZoneFeature {
+        CustomZoneFeature(id: id, createdAt: "x", label: nil,
+                          coordinates: coordinates, directional: true)
+    }
+
+    func testDirectionalZoneRunningWithTheSegmentResolvesForward() {
+        let features = [directionalZone(id: "zone-1",
+                                        coordinates: [[0.0002, 0.00001], [0.0008, 0.00001]])]
+        let result = CustomZoneImport.matchSegments(for: features, segments: [eastwardSegment()])
+        XCTAssertEqual(result.matches["zone-1"], [7: .forward])
+    }
+
+    func testDirectionalZoneRunningAgainstTheSegmentResolvesBackward() {
+        let features = [directionalZone(id: "zone-1",
+                                        coordinates: [[0.0008, 0.00001], [0.0002, 0.00001]])]
+        let result = CustomZoneImport.matchSegments(for: features, segments: [eastwardSegment()])
+        XCTAssertEqual(result.matches["zone-1"], [7: .backward])
+    }
+
+    func testNonDirectionalZoneResolvesBothRegardlessOfHowItWasDrawn() {
+        let features = [CustomZoneFeature(id: "zone-1", createdAt: "x", label: nil,
+                                          coordinates: [[0.0008, 0.00001], [0.0002, 0.00001]])]
+        let result = CustomZoneImport.matchSegments(for: features, segments: [eastwardSegment()])
+        XCTAssertEqual(result.matches["zone-1"], [7: .both])
+    }
+
+    /// A zone that doubles back inside one segment asserts both directions —
+    /// the union is what the rider drew, and it is the conservative reading.
+    func testDirectionalZoneDoublingBackWithinOneSegmentUnionsToBoth() {
+        let features = [directionalZone(
+            id: "zone-1",
+            coordinates: [[0.0002, 0.00001], [0.0008, 0.00001], [0.0003, 0.00001]])]
+        let result = CustomZoneImport.matchSegments(for: features, segments: [eastwardSegment()])
+        XCTAssertEqual(result.matches["zone-1"], [7: .both])
+    }
+
+    /// Two opposing one-way zones on one road: each keeps its own direction,
+    /// and the whole-file view sees the segment flagged both ways.
+    func testOpposingZonesKeepSeparateDirectionsAndUnionPerSegment() {
+        let features = [
+            directionalZone(id: "eastbound", coordinates: [[0.0002, 0.00001], [0.0008, 0.00001]]),
+            directionalZone(id: "westbound", coordinates: [[0.0008, 0.00001], [0.0002, 0.00001]]),
+        ]
+        let result = CustomZoneImport.matchSegments(for: features, segments: [eastwardSegment()])
+        XCTAssertEqual(result.matches["eastbound"], [7: .forward])
+        XCTAssertEqual(result.matches["westbound"], [7: .backward])
+        XCTAssertEqual(result.directionsBySegment, [7: .both])
+    }
+
+    /// A perpendicular zone still resolves deterministically rather than
+    /// dropping the match: exactly at the gate resolves forward (stated
+    /// tie-break, NFR-003).
+    func testPerpendicularDirectionalZoneResolvesForwardAtTheGate() {
+        // Drawn north (bearing 0°) across a segment whose node order runs
+        // east (90°) — a 90° disagreement, exactly alignmentGateDeg.
+        let features = [directionalZone(id: "zone-1",
+                                        coordinates: [[0.0005, -0.00001], [0.0005, 0.00001]])]
+        let result = CustomZoneImport.matchSegments(for: features, segments: [eastwardSegment()])
+        XCTAssertEqual(result.matches["zone-1"], [7: .forward])
+    }
+
+    func testDirectionalZoneWithNoUsableLocalBearingFallsBackToBoth() {
+        // A lone vertex has no edge, and a doubled vertex's edge is
+        // zero-length — neither yields a bearing to judge direction from.
+        let lone = directionalZone(id: "lone", coordinates: [[0.0005, 0.00001]])
+        let doubled = directionalZone(id: "doubled",
+                                      coordinates: [[0.0005, 0.00001], [0.0005, 0.00001]])
+        let result = CustomZoneImport.matchSegments(for: [lone, doubled],
+                                                    segments: [eastwardSegment()])
+        XCTAssertEqual(result.matches["lone"], [7: .both])
+        XCTAssertEqual(result.matches["doubled"], [7: .both])
+    }
+
+    // MARK: - TravelDirection / ZoneDirectionMask
+
+    func testResolveSplitsOnTheSameSideOfPerpendicular() {
+        XCTAssertEqual(TravelDirection.resolve(headingDeg: 90, alongBearingDeg: 90), .forward)
+        XCTAssertEqual(TravelDirection.resolve(headingDeg: 179, alongBearingDeg: 90), .forward)
+        XCTAssertEqual(TravelDirection.resolve(headingDeg: 181, alongBearingDeg: 90), .backward)
+        XCTAssertEqual(TravelDirection.resolve(headingDeg: 270, alongBearingDeg: 90), .backward)
+        // Wraps: 10° vs 350° is a 20° disagreement, not 340°.
+        XCTAssertEqual(TravelDirection.resolve(headingDeg: 10, alongBearingDeg: 350), .forward)
+    }
+
+    func testMaskAppliesOnlyToTheDirectionsItCarries() {
+        XCTAssertTrue(ZoneDirectionMask.forward.applies(to: .forward))
+        XCTAssertFalse(ZoneDirectionMask.forward.applies(to: .backward))
+        XCTAssertTrue(ZoneDirectionMask.both.applies(to: .backward))
+    }
+
+    func testUnknownCourseCannotRejectAnything() {
+        XCTAssertTrue(ZoneDirectionMask.forward.applies(to: nil))
+        XCTAssertTrue(ZoneDirectionMask.both.applies(to: nil))
+        XCTAssertFalse(ZoneDirectionMask([]).applies(to: nil))
     }
 
     // MARK: - personalMemoryChangePoints
