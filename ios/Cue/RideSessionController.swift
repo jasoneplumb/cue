@@ -201,14 +201,13 @@ final class RideSessionController: NSObject, ObservableObject {
     /// evictions the batch caused.
     private func applyCustomZoneMatchResult(_ result: CustomZoneMatchResult) {
         let evictionsBefore = personalMemoryStore.evictionCount
-        // One write per SEGMENT, carrying the directions unioned across every
-        // zone in this file that matched it (cue#30): recordUnsafeZone
-        // ASSIGNS the mask, so writing per zone instead would let the last
-        // zone processed — dictionary order, i.e. nondeterministic — decide
-        // the segment's directions and drop the others.
-        for (segmentID, directions) in result.directionsBySegment {
-            personalMemoryStore.recordUnsafeZone(segmentID: segmentID, directions: directions)
-        }
+        // REPLACES the imported-zone set, matching webmap.dev's own
+        // import-replaces-everything contract: a segment the rider deleted a
+        // zone from has to stop being flagged, and writing only the segments
+        // the new file covers would leave it flagged forever. Directions are
+        // unioned per segment across every zone in the file, so processing
+        // order cannot decide the outcome (cue#30).
+        personalMemoryStore.replaceUnsafeZones(directionsBySegment: result.directionsBySegment)
         persistPersonalMemory()
         var notes: [String] = []
         if !result.unmatchedZoneIDs.isEmpty {

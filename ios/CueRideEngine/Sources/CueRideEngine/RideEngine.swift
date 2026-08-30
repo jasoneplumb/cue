@@ -200,7 +200,17 @@ public final class RideEngine {
             heading_deg_x10: UInt16((heading * 10).rounded()) % 3600,
             segment_id: match?.segmentID ?? 0)
 
+        // NEUTRAL + 0 is byte-for-byte equivalent to memory == NULL (RFC 0002
+        // D5), so it is normalized to nil HERE — before the kernel call, the
+        // Pico link, and the recorder alike. Passing it to the kernel while
+        // the trace omitted it left the live and replay paths handing the
+        // kernel different inputs for the same rider state: no divergence
+        // today, since the kernel ignores a NEUTRAL record, but exactly the
+        // shape NFR-003 exists to prevent the moment it stops ignoring it.
+        // A direction-gated segment resolves NEUTRAL on every pass the other
+        // way, so this is now the common case rather than a corner.
         let resolvedMemory = resolveMemory(events: events, headingDeg: fixHeading)
+            .flatMap { $0.state == .neutral && $0.noticeBonusS == 0 ? nil : $0 }
         // Drop latches for segments that left play, so the next approach
         // resolves its own direction. A segment dropped by the maxEventsPerStep
         // cap re-latches when it next produces an event — the cap is a wire
@@ -308,9 +318,17 @@ public final class RideEngine {
     /// general version needs on-demand graph-distance queries against
     /// RouteEventTracker's road graph for arbitrary remembered segments.
     private func resolveMemory(events: [RouteEvent], headingDeg: Double?) -> ResolvedPersonalMemory? {
+        // Once per DISTINCT segment, not once per event. Two events can name
+        // the same segment in one step (overlapping zones), and resolving per
+        // event would advance the corroboration counter twice on one fix —
+        // latching in a single step and defeating the guard entirely.
+        var directions: [UInt32: TravelDirection?] = [:]
+        for segmentID in Set(events.map(\.segment_id)) {
+            directions[segmentID] = travelDirection(on: segmentID, headingDeg: headingDeg)
+        }
         var best: (event: RouteEvent, resolved: ResolvedPersonalMemory)?
         for event in events {
-            let direction = travelDirection(on: event.segment_id, headingDeg: headingDeg)
+            let direction = directions[event.segment_id] ?? nil
             guard let resolved = personalMemoryStore.resolved(for: event.segment_id,
                                                               travelling: direction)
             else { continue }

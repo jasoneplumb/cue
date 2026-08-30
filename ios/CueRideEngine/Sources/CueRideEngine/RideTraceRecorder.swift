@@ -111,12 +111,12 @@ public final class RideTraceRecorder {
                               headingKnown: headingKnown))
         let current: (segmentID: UInt32, state: PersonalMemoryState, noticeBonusS: UInt8)
         // A resolution of NEUTRAL + 0 is byte-for-byte equivalent to passing
-        // memory == NULL (RFC 0002 D5), so it is folded into the no-memory
-        // path rather than logged as a change point in its own right — a
-        // record naming a segment while carrying no bias tells replay
-        // nothing. This matters more since cue#30: a direction-gated segment
-        // resolves NEUTRAL on every pass the other way, which would otherwise
-        // put a void record in the trace for each one.
+        // memory == NULL (RFC 0002 D5), so it is not logged as a change point
+        // in its own right — a record naming a segment while carrying no bias
+        // tells replay nothing. RideEngine normalizes such a resolution to nil
+        // before it reaches either the kernel or this recorder, so the two
+        // paths cannot disagree about what the kernel saw; the check is kept
+        // here as a belt-and-braces guard for any other caller of record().
         if let resolvedMemory,
            resolvedMemory.state != .neutral || resolvedMemory.noticeBonusS != 0 {
             current = (resolvedMemory.segmentID, resolvedMemory.state, resolvedMemory.noticeBonusS)

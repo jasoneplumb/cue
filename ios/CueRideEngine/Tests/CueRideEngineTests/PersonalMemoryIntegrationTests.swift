@@ -341,6 +341,29 @@ final class PersonalMemoryIntegrationTests: XCTestCase {
                        "one bad fix must cost one sample, not the whole approach")
     }
 
+    /// Two zones can snap to one segment, so a step can carry two events
+    /// naming it. Resolving direction per EVENT advanced the corroboration
+    /// counter twice on a single fix, latching in one step and defeating the
+    /// guard — so a first-fix spike would suppress the approach after all.
+    func testOverlappingEventsOnOneSegmentDoNotLatchInASingleStep() throws {
+        let (segments, zones) = try fixtureSegmentsAndZones()
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: zones[0].segmentIDs[0], directions: .forward)
+        let engine = RideEngine(segments: segments, zones: zones, personalMemoryStore: store,
+                                rideID: "directional-overlapping-events",
+                                startedAt: "2026-07-22T00:00:00Z")
+        for second in 0..<120 {
+            engine.process(RideFix(
+                tMs: UInt32(second * 1000),
+                lat: 0.00002,
+                lon: -0.004 + 6.0 * Double(second) / 111_320.0,
+                speedMps: 6.0,
+                headingDeg: second == 0 ? 269 : 90))
+        }
+        XCTAssertEqual(try activeMemoryStates(in: engine), ["UNSAFE"],
+                       "one bad fix must still cost one sample, not the approach")
+    }
+
     func testUnaffectedRideStillCuesNormally() throws {
         // Regression guard: an engine with a fresh, empty store (the
         // default) behaves exactly as the pre-Phase-3 baseline.

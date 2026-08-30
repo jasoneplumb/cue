@@ -214,8 +214,10 @@ public final class PersonalMemoryStore {
         if record.markerCount > 0 {
             return (.unsafe, record.noticeBonusS)
         }
-        if !record.unsafeDirections.isEmpty,
-           record.unsafeDirections.applies(to: direction) {
+        // No !isEmpty guard: applies(to:) already answers false for an empty
+        // mask in both its branches, and a second guard saying the same thing
+        // is one more place for the two to drift apart.
+        if record.unsafeDirections.applies(to: direction) {
             return (.unsafe, record.noticeBonusS)
         }
         if record.falseAlarm >= falseAlarmMin && record.falseAlarm > record.useful {
@@ -329,12 +331,45 @@ public final class PersonalMemoryStore {
     /// This does NOT touch `markerCount`: an imported zone is tracked wholly
     /// in the mask so that re-importing is idempotent, and so that undoing a
     /// tap can never disturb a zone's assertion (or vice versa).
+    ///
+    /// Prefer `replaceUnsafeZones` for an import — this writes ONE segment and
+    /// cannot know about a zone the rider deleted.
     public func recordUnsafeZone(segmentID: UInt32, directions: ZoneDirectionMask) {
         guard segmentID != 0, !directions.isEmpty else { return }
         lock.lock(); defer { lock.unlock() }
         var record = touch(segmentID)
         record.unsafeDirections = directions
         recordsBySegment[segmentID] = record
+    }
+
+    /// Replace the whole imported-zone set with `directionsBySegment`, the
+    /// union across every zone in one file.
+    ///
+    /// Import REPLACES in webmap.dev, and the cue side has to mean the same
+    /// thing. Writing only the segments a new file covers would leave every
+    /// segment the rider DELETED a zone from still flagged, with no way to
+    /// take it back — the file is the whole statement, not a set of additions.
+    /// Segments whose only evidence was the departed zone are pruned outright,
+    /// exactly as an undo prunes; segments with taps or reviews keep those and
+    /// lose only the zone.
+    ///
+    /// This is what the separate zone field (cue#30) buys that a shared
+    /// `marker_count` could not: zone evidence can be cleared without
+    /// touching anything the rider did during a ride.
+    public func replaceUnsafeZones(directionsBySegment: [UInt32: ZoneDirectionMask]) {
+        lock.lock(); defer { lock.unlock() }
+        for (segmentID, record) in recordsBySegment where record.unsafeDirMask != 0 {
+            guard directionsBySegment[segmentID] == nil else { continue }
+            var cleared = record
+            cleared.unsafeDirMask = 0
+            storePruningIfEmpty(cleared, for: segmentID)
+        }
+        for (segmentID, directions) in directionsBySegment {
+            guard segmentID != 0, !directions.isEmpty else { continue }
+            var record = touch(segmentID)
+            record.unsafeDirections = directions
+            recordsBySegment[segmentID] = record
+        }
     }
 
     /// Reverse one previously-recorded "unsafe here" contribution — the

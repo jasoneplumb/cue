@@ -149,6 +149,34 @@ final class PersonalMemoryStoreTests: XCTestCase {
         XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe)
     }
 
+    /// Import REPLACES in webmap.dev, so it has to here too: a segment the
+    /// rider deleted a zone from must stop being flagged. Writing only the
+    /// segments a new file covers would leave the old one flagged forever,
+    /// with no way to take it back.
+    func testReplacingZonesClearsSegmentsTheNewFileDoesNotCover() {
+        let store = PersonalMemoryStore()
+        store.replaceUnsafeZones(directionsBySegment: [7: .forward, 8: .backward])
+        XCTAssertEqual(store.recordCount, 2)
+
+        store.replaceUnsafeZones(directionsBySegment: [8: .forward])
+        XCTAssertNil(store.resolved(for: 7, travelling: .forward),
+                     "segment 7's zone was deleted from the file — it must go")
+        XCTAssertEqual(store.resolved(for: 8, travelling: .forward)?.state, .unsafe,
+                       "and segment 8 takes its new direction")
+        XCTAssertEqual(store.recordCount, 1)
+    }
+
+    /// Clearing a departed zone must not take a rider's own history with it.
+    func testReplacingZonesKeepsTapAndReviewEvidenceOnACearedSegment() {
+        let store = PersonalMemoryStore()
+        store.replaceUnsafeZones(directionsBySegment: [7: .forward])
+        store.recordUnsafeMarker(segmentID: 7)
+
+        store.replaceUnsafeZones(directionsBySegment: [:])
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe,
+                       "the tap stands on its own, both ways")
+    }
+
     func testAnEmptyDirectionMaskIsNotRecordedAtAll() {
         let store = PersonalMemoryStore()
         store.recordUnsafeZone(segmentID: 7, directions: [])
