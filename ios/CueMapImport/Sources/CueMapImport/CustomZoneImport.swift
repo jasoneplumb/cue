@@ -124,6 +124,17 @@ public enum CustomZoneImport {
                 throw CustomZoneImportError.malformedFeature(
                     index: index, reason: "geometry must be a LineString with >= 2 positions")
             }
+            // Each position needs [lng, lat] (a third altitude element is
+            // fine). Checking only the position COUNT above would let a
+            // truncated position through to matchSegments, which can only
+            // skip it — quietly degrading the zone's direction rather than
+            // reporting the malformed file this parser promises to reject.
+            for (positionIndex, position) in rawCoordinates.enumerated()
+            where position.count < 2 {
+                throw CustomZoneImportError.malformedFeature(
+                    index: index,
+                    reason: "position \(positionIndex) must be [lng, lat] number pairs")
+            }
             guard let properties = feature["properties"] as? [String: Any],
                   properties["kind"] as? String == "custom_zone",
                   let id = properties["id"] as? String, !id.isEmpty,
@@ -224,10 +235,21 @@ public enum CustomZoneImport {
             var best: (distanceM: Double, segmentID: UInt32, bearingDeg: Double?)?
             for edge in edges {
                 let distance = pointToEdgeDistance(p, edge.a, edge.b)
-                if best == nil || distance < best!.distanceM {
-                    let degenerate = edge.a.x == edge.b.x && edge.a.y == edge.b.y
-                    best = (distance, edge.segmentID,
-                            degenerate ? nil : bearingDeg(edge.a, edge.b))
+                let degenerate = edge.a.x == edge.b.x && edge.a.y == edge.b.y
+                let bearing = degenerate ? nil : bearingDeg(edge.a, edge.b)
+                guard let current = best else {
+                    best = (distance, edge.segmentID, bearing)
+                    continue
+                }
+                // On an exact distance tie a directed edge beats a degenerate
+                // one. A duplicate OSM node sits exactly ON its neighbouring
+                // edges, so the tie is the COMMON case, not a curiosity — and
+                // letting the point win would throw away a direction the road
+                // plainly has.
+                if distance < current.distanceM
+                    || (distance == current.distanceM
+                        && current.bearingDeg == nil && bearing != nil) {
+                    best = (distance, edge.segmentID, bearing)
                 }
             }
             guard let best, best.distanceM <= maxDistanceM else { return nil }
@@ -268,16 +290,24 @@ public enum CustomZoneImport {
     }
 
     /// The zone's own direction of travel AT vertex `index`: the edge leaving
-    /// that vertex, or — for the last vertex, which has none — the edge
+    /// that vertex, or — for the LAST vertex, which has none — the edge
     /// arriving at it. nil when neither exists or both are zero-length
     /// (a lone vertex, or a double-tapped point), leaving the caller to fall
     /// back to `.both` rather than judging direction off a phantom bearing,
     /// the same reason SegmentMatcher skips zero-length edges outright.
+    ///
+    /// The incoming-edge fallback is reserved for the last vertex ONLY. Using
+    /// it whenever the outgoing neighbour is unusable would be worse than no
+    /// answer: on a zone that reverses right after the gap, the incoming
+    /// bearing is the exact OPPOSITE of the direction meant there, so the
+    /// zone would fire the wrong way — the one outcome a conservative
+    /// fallback exists to prevent.
     private static func localBearingDeg(of projected: [(x: Double, y: Double)?],
                                         at index: Int) -> Double? {
         guard let here = projected[index] else { return nil }
-        if index + 1 < projected.count, let next = projected[index + 1],
-           next.x != here.x || next.y != here.y {
+        if index + 1 < projected.count {
+            guard let next = projected[index + 1],
+                  next.x != here.x || next.y != here.y else { return nil }
             return bearingDeg(here, next)
         }
         if index > 0, let previous = projected[index - 1],

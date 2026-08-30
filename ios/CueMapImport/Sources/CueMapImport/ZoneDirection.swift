@@ -44,13 +44,15 @@ public enum TravelDirection: Sendable, Equatable {
     /// arbitrary either way, and a stated tie-break beats an accidental one
     /// (NFR-003).
     public static func resolve(headingDeg: Double, alongBearingDeg: Double) -> TravelDirection {
-        directedDiffDeg(headingDeg, alongBearingDeg) <= alignmentGateDeg ? .forward : .backward
+        angularSeparationDeg(headingDeg, alongBearingDeg) <= alignmentGateDeg ? .forward : .backward
     }
 
-    /// Full-circle bearing disagreement in [0, 180] — unlike
-    /// `SegmentMatcher.undirectedDiff`'s mod-180 reduction, the sign is the
-    /// whole point here.
-    static func directedDiffDeg(_ a: Double, _ b: Double) -> Double {
+    /// Unsigned separation between two bearings, in [0, 180]. Full-circle,
+    /// unlike `SegmentMatcher.undirectedDiff`'s mod-180 reduction — that is
+    /// what lets 91° read as "the other way" rather than "nearly aligned".
+    /// The magnitude is all the caller needs; deliberately NOT a signed
+    /// angle, and named so nobody reaches for it as one.
+    static func angularSeparationDeg(_ a: Double, _ b: Double) -> Double {
         var diff = abs(a - b).truncatingRemainder(dividingBy: 360)
         if diff > 180 { diff = 360 - diff }
         return diff
@@ -69,6 +71,19 @@ public struct ZoneDirectionMask: OptionSet, Codable, Hashable, Sendable {
 
     public init(rawValue: UInt8) {
         self.rawValue = rawValue
+    }
+
+    /// Coded as a bare integer. The synthesized conformance would wrap it as
+    /// {"rawValue": N} — legal, but it would leak an implementation detail
+    /// into every persisted file and wire format that ever carries a mask,
+    /// and silently fail to decode a plain number written by anything else.
+    public init(from decoder: any Decoder) throws {
+        rawValue = try decoder.singleValueContainer().decode(UInt8.self)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 
     public init(_ direction: TravelDirection) {

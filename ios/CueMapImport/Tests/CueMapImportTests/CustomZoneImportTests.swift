@@ -258,7 +258,58 @@ final class CustomZoneImportTests: XCTestCase {
         XCTAssertEqual(result.matches["zone-1"], [7: .both])
     }
 
+    func testThrowsWhenAPositionHasFewerThanTwoElements() {
+        let bad = feature(id: "zone-1", coordinates: [[0, 0], [0.001]])
+        XCTAssertThrowsError(try CustomZoneImport.parseFeatures(from: featureCollectionJSON([bad]))) {
+            guard case .malformedFeature(_, let reason) = $0 as? CustomZoneImportError else {
+                return XCTFail("expected .malformedFeature")
+            }
+            XCTAssertTrue(reason.contains("position 1"), reason)
+        }
+    }
+
+    /// A duplicate OSM node sits exactly ON its neighbouring edges, so the
+    /// zero-length edge ties every one of them on distance. The directed edge
+    /// has to win, or a single duplicated node would erase the direction of
+    /// the road it sits in the middle of.
+    func testADegenerateEdgeDoesNotShadowADirectedOneOnADistanceTie() {
+        let withDuplicateNode = RoadSegment(
+            id: 7, osmWayID: 7, splitSequence: 0, nodeIDs: [70, 71, 72],
+            latE7: [0, 0, 0],
+            lonE7: [0, 5000, 5000],  // second and third nodes coincide
+            lengthM: 55,
+            attributes: RoadAttributes(tags: ["highway": "secondary"]))
+        // A vertex right at the duplicated node, drawn eastward.
+        let features = [directionalZone(id: "zone-1",
+                                        coordinates: [[0.0005, 0], [0.0009, 0]])]
+        let result = CustomZoneImport.matchSegments(for: features, segments: [withDuplicateNode])
+        XCTAssertEqual(result.matches["zone-1"], [7: .forward])
+    }
+
+    /// A gap in the middle of a zone must not fall back to the INCOMING edge:
+    /// on a zone that reverses right after the gap that bearing is the exact
+    /// opposite of what was meant, so the zone would fire the wrong way.
+    func testAMissingIntermediateVertexYieldsBothNotTheOppositeDirection() {
+        let features = [CustomZoneFeature(
+            id: "zone-1", createdAt: "x", label: nil,
+            // Vertex 1 is unusable; vertex 2 reverses back west.
+            coordinates: [[0.0002, 0.00001], [0.0006], [0.0003, 0.00001]],
+            directional: true)]
+        let result = CustomZoneImport.matchSegments(for: features, segments: [eastwardSegment()])
+        let directions = try? XCTUnwrap(result.matches["zone-1"]?[7])
+        XCTAssertNotEqual(directions, ZoneDirectionMask.forward,
+                          "must never invert a zone's direction from a stale incoming edge")
+    }
+
     // MARK: - Codable contract
+
+    func testZoneDirectionMaskCodesAsABareInteger() throws {
+        let encoded = try JSONEncoder().encode(ZoneDirectionMask.backward)
+        XCTAssertEqual(String(decoding: encoded, as: UTF8.self), "2")
+        XCTAssertEqual(try JSONDecoder().decode(ZoneDirectionMask.self, from: Data("3".utf8)),
+                       .both)
+    }
+
 
     func testDecodesAValueEncodedBeforeDirectionalExisted() throws {
         let legacy = Data("""
