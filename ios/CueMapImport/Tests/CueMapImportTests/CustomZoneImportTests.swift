@@ -247,6 +247,36 @@ final class CustomZoneImportTests: XCTestCase {
         XCTAssertEqual(result.matches["doubled"], [7: .both])
     }
 
+    /// A segment whose two nodes coincide has no direction to judge against —
+    /// atan2(0, 0) would report north and silently flip forward/backward. The
+    /// zone must still snap to it, just without a direction.
+    func testDirectionalZoneOnADegenerateSegmentFallsBackToBoth() {
+        let degenerate = segment(id: 7, from: (0, 0.0005), to: (0, 0.0005))
+        let features = [directionalZone(id: "zone-1",
+                                        coordinates: [[0.0005, 0.00001], [0.0006, 0.00001]])]
+        let result = CustomZoneImport.matchSegments(for: features, segments: [degenerate])
+        XCTAssertEqual(result.matches["zone-1"], [7: .both])
+    }
+
+    // MARK: - Codable contract
+
+    func testDecodesAValueEncodedBeforeDirectionalExisted() throws {
+        let legacy = Data("""
+        {"id":"zone-1","createdAt":"x","coordinates":[[0,0],[0.001,0]]}
+        """.utf8)
+        let feature = try JSONDecoder().decode(CustomZoneFeature.self, from: legacy)
+        XCTAssertFalse(feature.directional)
+        XCTAssertNil(feature.label)
+    }
+
+    func testRoundTripsThroughJSONCoder() throws {
+        let feature = CustomZoneFeature(id: "zone-1", createdAt: "x", label: "Narrow",
+                                        coordinates: [[0, 0], [0.001, 0]], directional: true)
+        let decoded = try JSONDecoder().decode(
+            CustomZoneFeature.self, from: JSONEncoder().encode(feature))
+        XCTAssertEqual(decoded, feature)
+    }
+
     // MARK: - TravelDirection / ZoneDirectionMask
 
     func testResolveSplitsOnTheSameSideOfPerpendicular() {

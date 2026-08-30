@@ -39,6 +39,26 @@ public struct CustomZoneFeature: Codable, Equatable, Sendable {
         self.coordinates = coordinates
         self.directional = directional
     }
+
+    enum CodingKeys: String, CodingKey {
+        case id, createdAt, label, coordinates, directional
+    }
+
+    /// Hand-written so `directional` decodes as false when the key is absent.
+    /// The memberwise default above is invisible to a synthesized decoder,
+    /// which requires every non-optional property to be present — so a value
+    /// encoded before this property existed would fail to decode outright.
+    /// `parseFeatures` reads GeoJSON through JSONSerialization and never
+    /// takes this path, but the public Codable conformance is a contract in
+    /// its own right, and "absent means bidirectional" has to hold on both.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        coordinates = try container.decode([[Double]].self, forKey: .coordinates)
+        directional = try container.decodeIfPresent(Bool.self, forKey: .directional) ?? false
+    }
 }
 
 public enum CustomZoneImportError: Error, Equatable {
@@ -191,14 +211,23 @@ public enum CustomZoneImport {
             }
         }
 
+        /// `edgeBearingDeg` is nil when the winning edge is zero-length
+        /// (consecutive duplicate OSM nodes): atan2(0, 0) reports north, and
+        /// judging a zone's direction against a phantom bearing could flip
+        /// forward and backward outright. SegmentMatcher drops such edges
+        /// when building its index; here the edge is KEPT so a zone near a
+        /// degenerate segment still snaps to it as it always has — only the
+        /// direction is withheld, which the caller reads as `.both`.
         func nearestSegment(lat: Double, lon: Double)
-            -> (segmentID: UInt32, edgeBearingDeg: Double)? {
+            -> (segmentID: UInt32, edgeBearingDeg: Double?)? {
             let p = project(lat: lat, lon: lon)
-            var best: (distanceM: Double, segmentID: UInt32, bearingDeg: Double)?
+            var best: (distanceM: Double, segmentID: UInt32, bearingDeg: Double?)?
             for edge in edges {
                 let distance = pointToEdgeDistance(p, edge.a, edge.b)
                 if best == nil || distance < best!.distanceM {
-                    best = (distance, edge.segmentID, bearingDeg(edge.a, edge.b))
+                    let degenerate = edge.a.x == edge.b.x && edge.a.y == edge.b.y
+                    best = (distance, edge.segmentID,
+                            degenerate ? nil : bearingDeg(edge.a, edge.b))
                 }
             }
             guard let best, best.distanceM <= maxDistanceM else { return nil }
@@ -220,9 +249,10 @@ public enum CustomZoneImport {
                 else { continue }
                 let directions: ZoneDirectionMask
                 if feature.directional,
-                   let zoneBearing = localBearingDeg(of: projected, at: index) {
+                   let zoneBearing = localBearingDeg(of: projected, at: index),
+                   let edgeBearing = hit.edgeBearingDeg {
                     directions = ZoneDirectionMask(TravelDirection.resolve(
-                        headingDeg: zoneBearing, alongBearingDeg: hit.edgeBearingDeg))
+                        headingDeg: zoneBearing, alongBearingDeg: edgeBearing))
                 } else {
                     directions = .both
                 }
