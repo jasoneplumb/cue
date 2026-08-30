@@ -56,8 +56,26 @@ public struct CustomZoneFeature: Codable, Equatable, Sendable {
         id = try container.decode(String.self, forKey: .id)
         createdAt = try container.decode(String.self, forKey: .createdAt)
         label = try container.decodeIfPresent(String.self, forKey: .label)
-        coordinates = try container.decode([[Double]].self, forKey: .coordinates)
+        let decoded = try container.decode([[Double]].self, forKey: .coordinates)
+        // The same position check parseFeatures makes. Both entry points must
+        // enforce it or the weaker one becomes a way in: matchSegments can
+        // only SKIP a truncated position, so a directional zone would quietly
+        // resolve .both instead of the direction it was drawn with, with no
+        // diagnostic anywhere.
+        if let bad = CustomZoneFeature.firstTruncatedPosition(in: decoded) {
+            throw DecodingError.dataCorruptedError(
+                forKey: .coordinates, in: container,
+                debugDescription: "position \(bad) must be [lng, lat] number pairs")
+        }
+        coordinates = decoded
         directional = try container.decodeIfPresent(Bool.self, forKey: .directional) ?? false
+    }
+
+    /// Index of the first position with fewer than two elements, or nil when
+    /// every position is at least [lng, lat] (a third altitude element is
+    /// fine). Shared by both entry points — see `init(from:)`.
+    static func firstTruncatedPosition(in coordinates: [[Double]]) -> Int? {
+        coordinates.firstIndex { $0.count < 2 }
     }
 }
 
@@ -129,11 +147,10 @@ public enum CustomZoneImport {
             // truncated position through to matchSegments, which can only
             // skip it — quietly degrading the zone's direction rather than
             // reporting the malformed file this parser promises to reject.
-            for (positionIndex, position) in rawCoordinates.enumerated()
-            where position.count < 2 {
+            if let bad = CustomZoneFeature.firstTruncatedPosition(in: rawCoordinates) {
                 throw CustomZoneImportError.malformedFeature(
                     index: index,
-                    reason: "position \(positionIndex) must be [lng, lat] number pairs")
+                    reason: "position \(bad) must be [lng, lat] number pairs")
             }
             guard let properties = feature["properties"] as? [String: Any],
                   properties["kind"] as? String == "custom_zone",

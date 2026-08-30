@@ -289,19 +289,42 @@ final class CustomZoneImportTests: XCTestCase {
     /// A gap in the middle of a zone must not fall back to the INCOMING edge:
     /// on a zone that reverses right after the gap that bearing is the exact
     /// opposite of what was meant, so the zone would fire the wrong way.
-    func testAMissingIntermediateVertexYieldsBothNotTheOppositeDirection() {
+    func testAMissingIntermediateVertexYieldsBothNotTheOppositeDirection() throws {
         let features = [CustomZoneFeature(
             id: "zone-1", createdAt: "x", label: nil,
             // Vertex 1 is unusable; vertex 2 reverses back west.
             coordinates: [[0.0002, 0.00001], [0.0006], [0.0003, 0.00001]],
             directional: true)]
         let result = CustomZoneImport.matchSegments(for: features, segments: [eastwardSegment()])
-        let directions = try? XCTUnwrap(result.matches["zone-1"]?[7])
+        // `try`, not `try?`: an unmatched zone would make the assertion below
+        // pass for the wrong reason — nil is not .forward either.
+        let directions = try XCTUnwrap(result.matches["zone-1"]?[7])
         XCTAssertNotEqual(directions, ZoneDirectionMask.forward,
                           "must never invert a zone's direction from a stale incoming edge")
     }
 
     // MARK: - Codable contract
+
+    func testDecodingRejectsATruncatedPositionLikeParseFeaturesDoes() {
+        // Both entry points enforce this, or the weaker one becomes a way in:
+        // matchSegments can only SKIP a truncated position, quietly resolving
+        // a directional zone to .both with no diagnostic.
+        let json = Data("""
+        {"id":"zone-1","createdAt":"x","coordinates":[[0,0],[0.001]],"directional":true}
+        """.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(CustomZoneFeature.self, from: json))
+    }
+
+    /// Pins the leniency the parse comment claims: JSONSerialization hands
+    /// back an NSNumber for `1`, and `as? Bool` bridges it to true. Not a
+    /// contract webmap.dev ever exercises — its own parser rejects a
+    /// non-boolean — but the comment should not outlive the behavior.
+    func testJSONIntegerOneSatisfiesTheBooleanCheck() throws {
+        let data = featureCollectionJSON([
+            feature(id: "zone-1", coordinates: [[0, 0], [0.001, 0]], directional: 1),
+        ])
+        XCTAssertTrue(try CustomZoneImport.parseFeatures(from: data)[0].directional)
+    }
 
     func testZoneDirectionMaskCodesAsABareInteger() throws {
         let encoded = try JSONEncoder().encode(ZoneDirectionMask.backward)
