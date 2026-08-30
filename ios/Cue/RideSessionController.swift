@@ -201,14 +201,13 @@ final class RideSessionController: NSObject, ObservableObject {
     /// evictions the batch caused.
     private func applyCustomZoneMatchResult(_ result: CustomZoneMatchResult) {
         let evictionsBefore = personalMemoryStore.evictionCount
-        // Directions are carried but not yet consulted here — gating live
-        // cueing on them is cue#30 Phase 3. Until then a directional zone
-        // records exactly as a bidirectional one does, i.e. as it did before
-        // cue#30.
-        for segmentDirections in result.matches.values {
-            for segmentID in segmentDirections.keys {
-                personalMemoryStore.recordUnsafeMarker(segmentID: segmentID)
-            }
+        // One write per SEGMENT, carrying the directions unioned across every
+        // zone in this file that matched it (cue#30): recordUnsafeZone
+        // ASSIGNS the mask, so writing per zone instead would let the last
+        // zone processed — dictionary order, i.e. nondeterministic — decide
+        // the segment's directions and drop the others.
+        for (segmentID, directions) in result.directionsBySegment {
+            personalMemoryStore.recordUnsafeZone(segmentID: segmentID, directions: directions)
         }
         persistPersonalMemory()
         var notes: [String] = []

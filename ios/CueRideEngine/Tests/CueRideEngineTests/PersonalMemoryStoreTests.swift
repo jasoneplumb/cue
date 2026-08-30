@@ -2,6 +2,7 @@
 //         the derivation precedence (markers dominate), saturating counters,
 //         the too_late notice-bonus cap, LRU eviction at the 256-segment
 //         cap, and a save/load round trip.
+import CueMapImport
 import XCTest
 @testable import CueRideEngine
 
@@ -48,6 +49,110 @@ final class PersonalMemoryStoreTests: XCTestCase {
                                           tooLate: 5, markerCount: 0, noticeBonusS: 8, lruTouch: 0)
         XCTAssertEqual(PersonalMemoryStore.resolve(record).state, .neutral)
         XCTAssertEqual(PersonalMemoryStore.resolve(record).noticeBonusS, 8)
+    }
+
+    // MARK: - Direction gate (cue#30)
+
+    private func directionalRecord(_ directions: ZoneDirectionMask,
+                                   falseAlarm: UInt16 = 0, useful: UInt16 = 0)
+        -> PersonalMemoryRecord {
+        PersonalMemoryRecord(segmentID: 1, useful: useful, falseAlarm: falseAlarm,
+                             tooLate: 0, markerCount: 1, noticeBonusS: 0,
+                             unsafeDirMask: directions.rawValue, lruTouch: 0)
+    }
+
+    func testDirectionalMarkerAppliesOnlyTravellingThatWay() {
+        let record = directionalRecord(.forward)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .forward).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .backward).state, .neutral)
+    }
+
+    func testOmnidirectionalMarkerAppliesBothWays() {
+        let record = directionalRecord(.both)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .forward).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .backward).state, .unsafe)
+    }
+
+    func testUnknownCourseCannotRejectADirectionalMarker() {
+        // Standstill, or CoreLocation reporting no course — the gate cannot
+        // reject anything, so behavior matches a caller with no direction.
+        XCTAssertEqual(PersonalMemoryStore.resolve(directionalRecord(.forward),
+                                                   travelling: nil).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(directionalRecord(.forward)).state, .unsafe)
+    }
+
+    /// With the marker silent for this direction, the segment's review
+    /// history is the only evidence left and it should govern — the rider
+    /// flagged one way unsafe and graded the other way's cues false alarms.
+    func testMarkerSilentForThisDirectionFallsThroughToSuppress() {
+        let record = directionalRecord(.forward, falseAlarm: 2, useful: 0)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .forward).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .backward).state, .suppress)
+    }
+
+    // MARK: - Zone import write path (cue#30)
+
+    func testRecordUnsafeZoneAssignsRatherThanUnionsDirections() {
+        // Re-importing a file after flipping a zone's direction must leave
+        // the segment flagged the NEW way only — a union would flag both
+        // forever, with no way for the rider to take it back.
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .forward)
+        store.recordUnsafeZone(segmentID: 7, directions: .backward)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .neutral)
+    }
+
+    func testAnInRideMarkerRebroadensASegmentAZoneHadNarrowed() {
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .forward)
+        store.recordUnsafeMarker(segmentID: 7)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe)
+    }
+
+    func testAnEmptyDirectionMaskIsNotRecordedAtAll() {
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: [])
+        XCTAssertEqual(store.recordCount, 0)
+    }
+
+    // MARK: - Persistence migration (cue#30)
+
+    /// The highest-severity hazard in adding a field to this record: `load`
+    /// answers a decode failure with an EMPTY store, so a required new key
+    /// would silently discard a rider's entire history on first launch after
+    /// the upgrade. A pre-cue#30 file must load with every counter intact and
+    /// its segments omnidirectional.
+    func testLoadsAPreDirectionFileWithoutLosingHistory() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacy = Data("""
+        [{"segmentID":7,"useful":1,"falseAlarm":0,"tooLate":2,"markerCount":1,\
+        "noticeBonusS":4,"lruTouch":9}]
+        """.utf8)
+        try legacy.write(to: directory.appendingPathComponent("personal-memory.json"))
+
+        let store = PersonalMemoryStore.load(from: directory)
+        XCTAssertEqual(store.recordCount, 1, "a decode failure would have yielded an empty store")
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7)?.noticeBonusS, 4)
+    }
+
+    func testDirectionsSurviveASaveLoadRoundTrip() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .backward)
+        try store.save(to: directory)
+
+        let loaded = PersonalMemoryStore.load(from: directory)
+        XCTAssertEqual(loaded.resolved(for: 7, travelling: .backward)?.state, .unsafe)
+        XCTAssertEqual(loaded.resolved(for: 7, travelling: .forward)?.state, .neutral)
     }
 
     // MARK: - Store mutation: saturating counters, D4 bonus cap

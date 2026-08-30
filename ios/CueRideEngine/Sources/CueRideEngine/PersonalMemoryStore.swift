@@ -11,6 +11,7 @@
 // Pattern: markUnsafe/derivation logic is a pure, independently-testable
 //          function of a record (D2); the store itself is the thin
 //          saturating-counter + LRU-eviction wrapper around it (D1/D7).
+import CueMapImport
 import Foundation
 
 /// Mirrors kernel PersonalMemoryState (CUE_MEMORY_*, kernel/cue_policy.h) —
@@ -52,9 +53,63 @@ public struct PersonalMemoryRecord: Codable, Equatable, Sendable {
     public var tooLate: UInt16
     public var markerCount: UInt16
     public var noticeBonusS: UInt8
+    /// Directions in which this segment's UNSAFE evidence applies (cue#30),
+    /// as `ZoneDirectionMask`'s raw byte. Held raw so the persisted record
+    /// stays the flat table of integers RFC 0002 D1 describes — read it
+    /// through `unsafeDirections`. One byte takes the packed record from 17
+    /// to 18 B, still rounding to D7's 20 B, so the 5 KiB budget stands.
+    public var unsafeDirMask: UInt8
     /// Monotonic global write counter (not wall-clock — RTC-free, portable
     /// to a future sensor-pod store) for least-recently-touched eviction.
     public var lruTouch: UInt32
+
+    /// Typed view of `unsafeDirMask`.
+    public var unsafeDirections: ZoneDirectionMask {
+        get { ZoneDirectionMask(rawValue: unsafeDirMask) }
+        set { unsafeDirMask = newValue.rawValue }
+    }
+
+    /// `unsafeDirMask` defaults to `.both` — the pre-cue#30 meaning, and what
+    /// an in-ride marker tap asserts — so every existing construction site
+    /// reads as omnidirectional without restating it.
+    public init(segmentID: UInt32, useful: UInt16, falseAlarm: UInt16, tooLate: UInt16,
+                markerCount: UInt16, noticeBonusS: UInt8,
+                unsafeDirMask: UInt8 = ZoneDirectionMask.both.rawValue, lruTouch: UInt32) {
+        self.segmentID = segmentID
+        self.useful = useful
+        self.falseAlarm = falseAlarm
+        self.tooLate = tooLate
+        self.markerCount = markerCount
+        self.noticeBonusS = noticeBonusS
+        self.unsafeDirMask = unsafeDirMask
+        self.lruTouch = lruTouch
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case segmentID, useful, falseAlarm, tooLate, markerCount, noticeBonusS
+        case unsafeDirMask, lruTouch
+    }
+
+    /// Hand-written for ONE reason: `unsafeDirMask` must decode as `.both`
+    /// when the key is absent. A synthesized decoder requires every
+    /// non-optional property to be present, so adding this field would make
+    /// every personal-memory.json written before cue#30 fail to decode — and
+    /// `PersonalMemoryStore.load` answers a decode failure with an EMPTY
+    /// store, silently discarding a rider's entire accumulated history on
+    /// first launch after the upgrade. The memberwise default above is
+    /// invisible here; this is what actually protects the file.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        segmentID = try container.decode(UInt32.self, forKey: .segmentID)
+        useful = try container.decode(UInt16.self, forKey: .useful)
+        falseAlarm = try container.decode(UInt16.self, forKey: .falseAlarm)
+        tooLate = try container.decode(UInt16.self, forKey: .tooLate)
+        markerCount = try container.decode(UInt16.self, forKey: .markerCount)
+        noticeBonusS = try container.decode(UInt8.self, forKey: .noticeBonusS)
+        unsafeDirMask = try container.decodeIfPresent(UInt8.self, forKey: .unsafeDirMask)
+            ?? ZoneDirectionMask.both.rawValue
+        lruTouch = try container.decode(UInt32.self, forKey: .lruTouch)
+    }
 }
 
 /// Phone-side per-segment memory store (RFC 0002 D1, D7). Reference type:
@@ -126,8 +181,25 @@ public final class PersonalMemoryStore {
     /// history; else a segment with enough false_alarm evidence (and more
     /// false_alarm than useful) is suppressed; else neutral. A pure
     /// function of its input, independently testable without a store.
-    public static func resolve(_ record: PersonalMemoryRecord) -> (state: PersonalMemoryState, noticeBonusS: UInt8) {
-        if record.markerCount > 0 {
+    ///
+    /// `direction` is the way the rider is travelling the segment (cue#30).
+    /// Marker evidence applies only in the directions the record carries, so
+    /// a zone drawn for one direction of a road stays silent on the other.
+    /// A nil direction — unknown course at a standstill, or CoreLocation
+    /// reporting none — cannot reject anything, matching SegmentMatcher's
+    /// heading gate, and is why every caller that has no direction to offer
+    /// keeps its pre-cue#30 behavior by omitting the argument.
+    ///
+    /// Note marker evidence that does NOT apply this direction falls THROUGH
+    /// to the suppress rule rather than short-circuiting to neutral: with the
+    /// markers silent, the segment's review history is the only evidence
+    /// left, and it should govern. A rider who flags a road unsafe eastbound
+    /// and separately grades westbound cues as false alarms gets both
+    /// judgments honored, each in its own direction.
+    public static func resolve(_ record: PersonalMemoryRecord,
+                               travelling direction: TravelDirection? = nil)
+        -> (state: PersonalMemoryState, noticeBonusS: UInt8) {
+        if record.markerCount > 0, record.unsafeDirections.applies(to: direction) {
             return (.unsafe, record.noticeBonusS)
         }
         if record.falseAlarm >= falseAlarmMin && record.falseAlarm > record.useful {
@@ -138,11 +210,12 @@ public final class PersonalMemoryStore {
 
     /// The resolved input for `segmentID`, or nil if nothing is remembered
     /// for it (equivalent to a NEUTRAL + 0 record — RideEngine treats both
-    /// the same way).
-    public func resolved(for segmentID: UInt32) -> ResolvedPersonalMemory? {
+    /// the same way). See `resolve` for what `travelling` gates.
+    public func resolved(for segmentID: UInt32,
+                         travelling direction: TravelDirection? = nil) -> ResolvedPersonalMemory? {
         lock.lock(); defer { lock.unlock() }
         guard segmentID != 0, let record = recordsBySegment[segmentID] else { return nil }
-        let (state, bonus) = Self.resolve(record)
+        let (state, bonus) = Self.resolve(record, travelling: direction)
         return ResolvedPersonalMemory(segmentID: segmentID, state: state, noticeBonusS: bonus)
     }
 
@@ -208,15 +281,44 @@ public final class PersonalMemoryStore {
         storePruningIfEmpty(record, for: segmentID)
     }
 
-    /// Record an explicit "unsafe here" signal for a segment — an in-ride
-    /// marker tap, OR an imported webmap.dev custom zone (same epistemic
-    /// category: the rider is asserting risk, just authored beforehand
-    /// rather than mid-ride). Both land here; D2 does not distinguish them.
+    /// Record an in-ride "unsafe here" marker tap for a segment (FR-006).
+    /// A tap carries no direction — the rider is asserting risk about the
+    /// place, not about one way through it — so it UNIONS `.both` into the
+    /// record, re-broadening a segment an earlier directional zone had
+    /// narrowed. Fresh in-the-moment evidence outranks an older file.
     public func recordUnsafeMarker(segmentID: UInt32) {
         guard segmentID != 0 else { return }
         lock.lock(); defer { lock.unlock() }
         var record = touch(segmentID)
         record.markerCount = Self.saturatingIncrement(record.markerCount)
+        record.unsafeDirections.formUnion(.both)
+        recordsBySegment[segmentID] = record
+    }
+
+    /// Record an imported webmap.dev custom zone's "unsafe here" for a
+    /// segment — the same epistemic category as a marker tap (the rider is
+    /// asserting risk, just authored beforehand rather than mid-ride), which
+    /// is why D2 still does not distinguish them, but with a direction the
+    /// tap does not have.
+    ///
+    /// `directions` is ASSIGNED, not unioned. webmap.dev's own contract is
+    /// that importing a file REPLACES the zone set, and the cue side must not
+    /// drift from that: without assignment, flipping a zone's direction and
+    /// re-importing would leave both directions flagged forever, since
+    /// `markerCount` cannot be attributed back to the zone that raised it.
+    /// The caller is expected to pass the union across every zone in the file
+    /// that matched this segment (`CustomZoneMatchResult.directionsBySegment`),
+    /// so two opposing zones in one file still assign `.both`.
+    ///
+    /// This can narrow a segment an in-ride tap had left omnidirectional. That
+    /// is the rider's own later, more considered statement about the road, and
+    /// narrowing means fewer cues — the conservative direction (NFR-001).
+    public func recordUnsafeZone(segmentID: UInt32, directions: ZoneDirectionMask) {
+        guard segmentID != 0, !directions.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }
+        var record = touch(segmentID)
+        record.markerCount = Self.saturatingIncrement(record.markerCount)
+        record.unsafeDirections = directions
         recordsBySegment[segmentID] = record
     }
 
@@ -234,7 +336,15 @@ public final class PersonalMemoryStore {
     }
 
     /// Write back an undo result, removing the record entirely once every
-    /// counter and the bonus are zero: resolved(for:) documents a missing
+    /// counter and the bonus are zero. `unsafeDirMask` is deliberately NOT
+    /// part of that test and is never rolled back: the mask is not
+    /// attributable per contribution (nothing records which tap or zone
+    /// raised which bits), and with `markerCount` at zero it is never
+    /// consulted — `resolve` reads it only inside the marker branch. A record
+    /// that zeroes out is removed outright, taking the mask with it, so a
+    /// discarded ride still leaves the store exactly as it found it (#135).
+    ///
+    /// resolved(for:) documents a missing
     /// record as equivalent to NEUTRAL + 0, and a lingering zeroed record
     /// would still consume a slot in the 256-segment cap and inflate
     /// recordCount — a discarded ride must leave the store's counts
