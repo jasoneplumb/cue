@@ -8,6 +8,12 @@
 //         gitignored rides/ directory); -o writes elsewhere. This REPLACES
 //         the trace's personal_memory[] with what the custom zones resolve
 //         to (a what-if merge, not an additive one — see CueCustomZoneMerge).
+//         A DIRECTIONAL zone (cue#30) is applied only on samples whose course
+//         says the rider was travelling its way; a trace with no
+//         heading_deg_x10 cannot be gated, so those zones fall back to
+//         applying both ways and the affected sample count is reported.
+//         --strict refuses such a trace instead, the same escape hatch
+//         cue-events-export offers for skipped events.
 // Privacy: traces and region extracts both reveal ride locations by
 //          segment id (NFR-005) — all three inputs and the output stay off
 //          git (/rides/, *.geojson, /region.json are gitignored).
@@ -20,11 +26,17 @@ func fail(_ message: String) -> Never {
 }
 
 let usage = """
-    usage: cue-custom-zone-merge <trace.json> <custom-zones.geojson> <region.json> [-o out.json]
+    usage: cue-custom-zone-merge <trace.json> <custom-zones.geojson> <region.json> [-o out.json] [--strict]
     WARNING: without -o, <trace.json> is overwritten in place (rides/ is gitignored — no easy undo).
+    --strict: fail instead of applying a directional zone both ways on samples the trace cannot gate.
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
+var strict = false
+if let flagIndex = arguments.firstIndex(of: "--strict") {
+    strict = true
+    arguments.remove(at: flagIndex)
+}
 var outputPath: String?
 if let flagIndex = arguments.firstIndex(of: "-o") {
     guard flagIndex + 1 < arguments.count else { fail("-o requires a path") }
@@ -42,11 +54,20 @@ do {
         trace: Data(contentsOf: traceURL),
         customZones: Data(contentsOf: customZonesURL),
         region: Data(contentsOf: regionURL))
+    if summary.ungatedSamples > 0 {
+        let detail = """
+        \(summary.ungatedSamples) sample(s) carried no heading_deg_x10, so directional zone(s) \
+        were applied in BOTH directions there — this what-if overstates them by however much \
+        the reverse passes contribute. Re-record with the debug-GPS toggle on for a gated answer.
+        """
+        if strict { fail("error: " + detail) }
+        FileHandle.standardError.write(Data(("warning: " + detail + "\n").utf8))
+    }
     try merged.write(to: outputURL, options: .atomic)
     print("""
     \(summary.zonesMatched) zone(s) matched -> \(summary.segmentsMatched) segment(s) \
     (\(summary.zonesUnmatched) zone(s) unmatched), \(summary.changePoints) personal_memory \
-    change point(s) -> \(outputURL.path)
+    change point(s), \(summary.ungatedSamples) ungated sample(s) -> \(outputURL.path)
     """)
 } catch {
     fail("error: \(error)")
