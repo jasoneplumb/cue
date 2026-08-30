@@ -549,22 +549,45 @@ final class CustomZoneImportTests: XCTestCase {
         XCTAssertEqual(resolved.ungatedSamples, 0)
     }
 
-    /// The offline twin of RideEngine's latch: direction is resolved when the
-    /// segment comes into play and held, so a single course spike mid-approach
-    /// cannot flip the zone off and back on.
-    func testDirectionIsLatchedWhileTheSegmentStaysInPlay() {
+    /// The offline twin of RideEngine's latch: once two consecutive samples
+    /// agree the direction is held, so a later course spike cannot flip the
+    /// zone off and back on.
+    func testDirectionIsLatchedOnceCorroborated() {
         let samples = [
             CustomZoneImport.TraceSample(tMs: 0, headingDeg: 90),
-            CustomZoneImport.TraceSample(tMs: 1000, headingDeg: 265),
-            CustomZoneImport.TraceSample(tMs: 2000, headingDeg: 90),
+            CustomZoneImport.TraceSample(tMs: 1000, headingDeg: 90),  // latches .forward
+            CustomZoneImport.TraceSample(tMs: 2000, headingDeg: 265), // absorbed
+            CustomZoneImport.TraceSample(tMs: 3000, headingDeg: 90),
         ]
         let resolved = CustomZoneImport.personalMemoryChangePoints(
             directionsBySegment: [7: .forward],
             samples: samples,
-            observedSegmentIDs: [0: [7], 1000: [7], 2000: [7]],
+            observedSegmentIDs: [0: [7], 1000: [7], 2000: [7], 3000: [7]],
             segmentBearingDeg: [7: 90])
         XCTAssertEqual(resolved.changePoints,
                        [.init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)])
+    }
+
+    /// Before the latch corroborates, each sample gates on its own reading —
+    /// so a spike inside that window costs exactly that sample, and never the
+    /// approach. Same shape as the live engine's behavior, deliberately.
+    func testASpikeBeforeCorroborationCostsOnlyThatSample() {
+        let samples = [
+            CustomZoneImport.TraceSample(tMs: 0, headingDeg: 90),
+            CustomZoneImport.TraceSample(tMs: 1000, headingDeg: 265),
+            CustomZoneImport.TraceSample(tMs: 2000, headingDeg: 90),
+            CustomZoneImport.TraceSample(tMs: 3000, headingDeg: 90),
+        ]
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: samples,
+            observedSegmentIDs: [0: [7], 1000: [7], 2000: [7], 3000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints, [
+            .init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0),
+            .init(tMs: 1000, segmentID: 7, state: "NEUTRAL", noticeBonusS: 0),
+            .init(tMs: 2000, segmentID: 7, state: "UNSAFE", noticeBonusS: 0),
+        ])
     }
 
     func testASegmentLeavingPlayRelatchesOnItsNextApproach() {

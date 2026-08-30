@@ -466,20 +466,24 @@ public enum CustomZoneImport {
         var changePoints: [PersonalMemoryChangePoint] = []
         var last: (segmentID: UInt32, state: String, noticeBonusS: UInt8) = (0, "NEUTRAL", 0)
         var ungatedSamples = 0
-        // Same latch as RideEngine's: a direction is resolved when a segment
-        // first comes into play and held until it stops producing events, so
-        // an offline what-if and the live engine cannot disagree about a
-        // segment whose direction sits near the gate.
+        // Same latch as RideEngine's, corroboration and all: a direction
+        // becomes sticky only after `directionLatchSamples` consecutive
+        // samples agree, and each sample's own resolution is used until then.
+        // Latching on the first sample would let one course spike gate a zone
+        // out for an entire approach. The two implementations must match or
+        // an offline what-if stops predicting what the phone did.
         var latched: [UInt32: TravelDirection] = [:]
+        var candidate: [UInt32: (direction: TravelDirection, count: Int)] = [:]
         for sample in samples {
             let observed = observedSegmentIDs[sample.tMs] ?? []
             latched = latched.filter { observed.contains($0.key) }
+            candidate = candidate.filter { observed.contains($0.key) }
             var sawUngated = false
             let applicable = observed.filter { segmentID in
                 guard let directions = directionsBySegment[segmentID] else { return false }
                 let direction = travelDirection(on: segmentID, headingDeg: sample.headingDeg,
                                                 segmentBearingDeg: segmentBearingDeg,
-                                                latched: &latched)
+                                                latched: &latched, candidate: &candidate)
                 if direction == nil, directions != .both { sawUngated = true }
                 return directions.applies(to: direction)
             }.min()
@@ -507,19 +511,35 @@ public enum CustomZoneImport {
                                                ungatedSamples: ungatedSamples)
     }
 
-    /// Offline twin of RideEngine.travelDirection: resolve once against the
-    /// segment's node-order bearing, then hold. nil — which
-    /// `ZoneDirectionMask.applies(to:)` reads as "cannot reject anything" —
-    /// when the sample carries no course or the segment has no bearing.
+    /// Number of consecutive agreeing samples before a segment's direction
+    /// latches. Mirrors RideEngine.directionLatchSamples — change BOTH or a
+    /// desk what-if stops predicting live behavior.
+    static let directionLatchSamples = 2
+
+    /// Offline twin of RideEngine.travelDirection: this sample's own
+    /// resolution against the segment's node-order bearing until
+    /// `directionLatchSamples` consecutive samples agree, the latched one
+    /// after. nil — which `ZoneDirectionMask.applies(to:)` reads as "cannot
+    /// reject anything" — only when there is nothing to measure: no course on
+    /// the sample, or no bearing for the segment.
     private static func travelDirection(
         on segmentID: UInt32, headingDeg: Double?,
         segmentBearingDeg: [UInt32: Double],
-        latched: inout [UInt32: TravelDirection]
+        latched: inout [UInt32: TravelDirection],
+        candidate: inout [UInt32: (direction: TravelDirection, count: Int)]
     ) -> TravelDirection? {
         if let existing = latched[segmentID] { return existing }
         guard let headingDeg, let bearing = segmentBearingDeg[segmentID] else { return nil }
         let direction = TravelDirection.resolve(headingDeg: headingDeg, alongBearingDeg: bearing)
-        latched[segmentID] = direction
+        let count = candidate[segmentID]?.direction == direction
+            ? candidate[segmentID]!.count + 1
+            : 1
+        if count >= directionLatchSamples {
+            candidate[segmentID] = nil
+            latched[segmentID] = direction
+        } else {
+            candidate[segmentID] = (direction, count)
+        }
         return direction
     }
 }
