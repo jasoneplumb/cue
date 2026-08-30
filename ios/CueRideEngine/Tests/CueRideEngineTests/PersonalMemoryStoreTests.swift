@@ -53,12 +53,22 @@ final class PersonalMemoryStoreTests: XCTestCase {
 
     // MARK: - Direction gate (cue#30)
 
+    /// An imported zone asserts a direction and contributes NO markerCount —
+    /// a tap is the thing that counts there, and it applies omnidirectionally.
     private func directionalRecord(_ directions: ZoneDirectionMask,
                                    falseAlarm: UInt16 = 0, useful: UInt16 = 0)
         -> PersonalMemoryRecord {
         PersonalMemoryRecord(segmentID: 1, useful: useful, falseAlarm: falseAlarm,
-                             tooLate: 0, markerCount: 1, noticeBonusS: 0,
+                             tooLate: 0, markerCount: 0, noticeBonusS: 0,
                              unsafeDirMask: directions.rawValue, lruTouch: 0)
+    }
+
+    func testAnInRideTapAppliesWhicheverWayTheRiderIsGoing() {
+        // A tap is about the place, not a direction through it.
+        let record = PersonalMemoryRecord(segmentID: 1, useful: 0, falseAlarm: 0, tooLate: 0,
+                                          markerCount: 1, noticeBonusS: 0, lruTouch: 0)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .forward).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .backward).state, .unsafe)
     }
 
     func testDirectionalMarkerAppliesOnlyTravellingThatWay() {
@@ -71,6 +81,34 @@ final class PersonalMemoryStoreTests: XCTestCase {
         let record = directionalRecord(.both)
         XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .forward).state, .unsafe)
         XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .backward).state, .unsafe)
+    }
+
+    /// The reviewer's sequence on #32: import a directional zone, tap the
+    /// same segment mid-ride, then discard that ride. The tap's undo must not
+    /// leave the zone applying BOTH ways — which is exactly what a single
+    /// shared mask did, because nothing could attribute the widening back to
+    /// the tap that caused it.
+    func testDiscardingARideLeavesAnImportedZonesDirectionIntact() {
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .forward)
+        store.recordUnsafeMarker(segmentID: 7)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe,
+                       "while the tap stands, the segment is unsafe both ways")
+
+        store.undoUnsafeMarker(segmentID: 7)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .neutral,
+                       "the discarded ride's tap must not outlive itself as a widened zone")
+    }
+
+    func testARecordHoldingOnlyAZoneIsNotPrunedAway() {
+        // markerCount is 0 for a zone-only segment, so the prune test has to
+        // count the mask as evidence or an import would vanish on any undo.
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .forward)
+        store.undoUnsafeMarker(segmentID: 7)
+        XCTAssertEqual(store.recordCount, 1)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .unsafe)
     }
 
     func testUnknownCourseCannotRejectADirectionalMarker() {
@@ -103,7 +141,7 @@ final class PersonalMemoryStoreTests: XCTestCase {
         XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .neutral)
     }
 
-    func testAnInRideMarkerRebroadensASegmentAZoneHadNarrowed() {
+    func testAnInRideMarkerAppliesBothWaysOverAZonesNarrowerAssertion() {
         let store = PersonalMemoryStore()
         store.recordUnsafeZone(segmentID: 7, directions: .forward)
         store.recordUnsafeMarker(segmentID: 7)
@@ -137,6 +175,9 @@ final class PersonalMemoryStoreTests: XCTestCase {
 
         let store = PersonalMemoryStore.load(from: directory)
         XCTAssertEqual(store.recordCount, 1, "a decode failure would have yielded an empty store")
+        // markerCount covers whatever raised it before cue#30, and that still
+        // resolves omnidirectionally — the absent mask means "no zone", not
+        // "no evidence".
         XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .unsafe)
         XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe)
         XCTAssertEqual(store.resolved(for: 7)?.noticeBonusS, 4)

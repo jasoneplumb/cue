@@ -87,24 +87,46 @@ public final class RideEngine {
     /// travelling a segment whose memory record is direction-gated (cue#30).
     /// Segments with no bearing (degenerate geometry) are simply absent.
     private let segmentBearingDeg: [UInt32: Double]
-    /// Travel direction latched per segment while it is in play (cue#30).
+    /// Travel direction latched per segment while it is in play (cue#30),
+    /// and the candidate accumulating evidence for a segment not yet latched.
     ///
-    /// Resolved once, when a remembered segment first produces an event, and
-    /// held until it stops producing them — recomputing every sample would
-    /// let course jitter near the 90° gate dither the bias and fill the
-    /// trace's personal_memory[] with change points describing GPS noise.
-    /// Mirrors RouteEventTracker.entryEndpoint, which latches the endpoint a
-    /// zone was entered through for the same reason.
+    /// Held rather than recomputed per sample because course jitter near the
+    /// 90° gate would otherwise dither the bias and fill the trace's
+    /// personal_memory[] with change points describing GPS noise. Mirrors
+    /// RouteEventTracker.entryEndpoint, which latches the endpoint a zone was
+    /// entered through for the same reason.
+    ///
+    /// CORROBORATED before it latches, though — `directionLatchSamples`
+    /// consecutive samples must agree, the same discipline
+    /// SegmentMatcher.hysteresisSamples applies so "a single heading spike
+    /// cannot flap the match". Latching on the first fix would let one bad
+    /// course decide an entire approach: a transient reading 91° off the
+    /// segment latches the wrong way, every correct fix afterwards is
+    /// ignored, and a directional zone is gated OUT for the whole approach.
+    /// That is a SUPPRESSED cue — strictly worse than the pre-cue#30
+    /// behavior of applying the record both ways, and not a direction this
+    /// feature may fail in.
+    ///
+    /// Before it latches, each sample's own resolution is used PROVISIONALLY
+    /// rather than withheld — a rider going the wrong way is gated out from
+    /// the first sample, as intended, and a spike costs exactly one sample
+    /// instead of an approach. Two nil meanings are kept apart here: no
+    /// course at all reads nil and applies the record (the gate cannot reject
+    /// what it cannot measure), while a measured-but-uncorroborated course
+    /// still gates.
     ///
     /// Scope, precisely: this holds the direction for a segment that STAYS in
     /// play. It cannot help when a course transient is large enough to trip
     /// RouteEventTracker's own directed approach gate, because that drops the
     /// route event entirely and there is then no memory to resolve at all —
     /// pre-existing behavior, unchanged by cue#30 and pinned by
-    /// PersonalMemoryIntegrationTests. What it does guard is the case where
-    /// the approach bearing and the segment's node-order bearing differ, so
-    /// the event survives while the direction sits near the gate.
+    /// PersonalMemoryIntegrationTests.
     private var latchedDirection: [UInt32: TravelDirection] = [:]
+    private var directionCandidate: [UInt32: (direction: TravelDirection, count: Int)] = [:]
+
+    /// Consecutive agreeing samples before a segment's direction latches —
+    /// mirrors SegmentMatcher.hysteresisSamples, for the same reason.
+    static let directionLatchSamples = 2
 
     /// `config == nil` applies the spec §8 defaults. `startedAt` is the
     /// ride's wall-clock start, ISO 8601 UTC (caller-formatted so exports
@@ -185,6 +207,7 @@ public final class RideEngine {
         // constraint, and re-resolving is the same work the first approach did.
         let inPlay = Set(events.map(\.segment_id))
         latchedDirection = latchedDirection.filter { inPlay.contains($0.key) }
+        directionCandidate = directionCandidate.filter { inPlay.contains($0.key) }
         let kernelMemory = resolvedMemory.map {
             PersonalMemory(segment_id: $0.segmentID, state: $0.state.rawValue,
                            notice_bonus_s: $0.noticeBonusS)
@@ -307,26 +330,34 @@ public final class RideEngine {
         return best?.resolved
     }
 
-    /// Which way the rider is travelling `segmentID`, latched on first use
-    /// (see `latchedDirection`). nil — which the store reads as "cannot
-    /// reject anything" — when the fix carries no course, or the segment has
-    /// no bearing to compare against; neither case latches, so the direction
-    /// resolves as soon as a usable course arrives.
+    /// Which way the rider is travelling `segmentID`: this sample's own
+    /// resolution until `directionLatchSamples` consecutive samples agree,
+    /// the latched one after that. nil — which the store reads as "cannot
+    /// reject anything" — only when there is nothing to measure: no course on
+    /// the fix, or no bearing for the segment.
     ///
     /// The comparand is the EVENT's segment, not the matched one: memory
     /// applies to a segment plus an approach window ahead of it (RFC 0002
     /// D3), and "forward" is defined by that segment's own node order, so
     /// judging it against the road the rider currently occupies would be
     /// meaningless for anything upcoming. On approach this is a heuristic —
-    /// course now versus a segment not yet reached — bounded by the 90° gate
-    /// and by the latch, and degrading at worst to the pre-cue#30 behavior of
-    /// applying the record both ways.
+    /// course now versus a segment not yet reached — bounded by the 90° gate,
+    /// by corroboration, and by the fact that an unresolved direction applies
+    /// the record rather than withholding it.
     private func travelDirection(on segmentID: UInt32,
                                  headingDeg: Double?) -> TravelDirection? {
         if let latched = latchedDirection[segmentID] { return latched }
         guard let headingDeg, let bearing = segmentBearingDeg[segmentID] else { return nil }
         let direction = TravelDirection.resolve(headingDeg: headingDeg, alongBearingDeg: bearing)
-        latchedDirection[segmentID] = direction
+        let count = directionCandidate[segmentID]?.direction == direction
+            ? directionCandidate[segmentID]!.count + 1
+            : 1
+        if count >= Self.directionLatchSamples {
+            directionCandidate[segmentID] = nil
+            latchedDirection[segmentID] = direction
+        } else {
+            directionCandidate[segmentID] = (direction, count)
+        }
         return direction
     }
 

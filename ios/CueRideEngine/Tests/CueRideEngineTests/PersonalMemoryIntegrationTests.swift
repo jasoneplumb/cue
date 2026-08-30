@@ -315,6 +315,32 @@ final class PersonalMemoryIntegrationTests: XCTestCase {
         XCTAssertEqual(try activeMemoryStates(in: engine), ["UNSAFE", "NEUTRAL", "UNSAFE"])
     }
 
+    /// The reviewer's case on #32: one bad course on the first fix used to
+    /// latch the wrong direction and gate a directional zone out for the
+    /// WHOLE approach — a suppressed cue, strictly worse than the pre-cue#30
+    /// behavior of applying the record both ways. Corroboration bounds it to
+    /// the single spiked sample.
+    func testAFirstFixCourseSpikeDoesNotSuppressTheApproach() throws {
+        let (segments, zones) = try fixtureSegmentsAndZones()
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: zones[0].segmentIDs[0], directions: .forward)
+        let engine = RideEngine(segments: segments, zones: zones, personalMemoryStore: store,
+                                rideID: "directional-first-fix-spike",
+                                startedAt: "2026-07-22T00:00:00Z")
+        for second in 0..<120 {
+            engine.process(RideFix(
+                tMs: UInt32(second * 1000),
+                lat: 0.00002,
+                lon: -0.004 + 6.0 * Double(second) / 111_320.0,
+                speedMps: 6.0,
+                // 269 is 91 degrees off the eastbound segment — just past the
+                // gate, so it resolves backward.
+                headingDeg: second == 0 ? 269 : 90))
+        }
+        XCTAssertEqual(try activeMemoryStates(in: engine), ["UNSAFE"],
+                       "one bad fix must cost one sample, not the whole approach")
+    }
+
     func testUnaffectedRideStillCuesNormally() throws {
         // Regression guard: an engine with a fresh, empty store (the
         // default) behaves exactly as the pre-Phase-3 baseline.
