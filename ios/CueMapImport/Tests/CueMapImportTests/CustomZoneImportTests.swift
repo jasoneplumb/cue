@@ -540,6 +540,41 @@ final class CustomZoneImportTests: XCTestCase {
         XCTAssertEqual(resolved.ungatedSamples, 2, "only the samples that observed the segment")
     }
 
+    /// A segment with no bearing also yields a nil direction, but it is a
+    /// different problem: no re-recording can supply a bearing the geometry
+    /// does not have, so telling the operator to re-record would be advice
+    /// that cannot work. Counted apart, and never as an ungated sample.
+    func testABearinglessSegmentIsReportedApartFromAMissingCourse() {
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: heading(90, at: [0, 1000]),
+            observedSegmentIDs: [0: [7], 1000: [7]],
+            segmentBearingDeg: [:])  // degenerate segment — no bearing
+        XCTAssertEqual(resolved.ungatedSamples, 0, "the trace's course was fine")
+        XCTAssertEqual(resolved.undirectedSegments, 1)
+        XCTAssertEqual(resolved.changePoints,
+                       [.init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)],
+                       "and the zone still applies rather than being silently dropped")
+    }
+
+    /// The offline mirror of #32's per-segment latch fix: a repeated segment
+    /// id in one sample's observations must not advance corroboration twice.
+    func testARepeatedSegmentInOneSampleDoesNotLatchTwice() {
+        let samples = [
+            CustomZoneImport.TraceSample(tMs: 0, headingDeg: 265),
+            CustomZoneImport.TraceSample(tMs: 1000, headingDeg: 90),
+            CustomZoneImport.TraceSample(tMs: 2000, headingDeg: 90),
+        ]
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: samples,
+            observedSegmentIDs: [0: [7, 7], 1000: [7, 7], 2000: [7, 7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints,
+                       [.init(tMs: 1000, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)],
+                       "the spiked first sample gates out; it must not latch backward")
+    }
+
     func testABidirectionalZoneIsNeverCountedAsUngated() {
         let resolved = CustomZoneImport.personalMemoryChangePoints(
             directionsBySegment: [7: .both],

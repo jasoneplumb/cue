@@ -54,12 +54,26 @@ do {
         trace: Data(contentsOf: traceURL),
         customZones: Data(contentsOf: customZonesURL),
         region: Data(contentsOf: regionURL))
+    var warnings: [String] = []
     if summary.ungatedSamples > 0 {
-        let detail = """
+        warnings.append("""
         \(summary.ungatedSamples) sample(s) carried no heading_deg_x10, so directional zone(s) \
         were applied in BOTH directions there — this what-if overstates them by however much \
         the reverse passes contribute. Re-record with the debug-GPS toggle on for a gated answer.
-        """
+        """)
+    }
+    if summary.undirectedSegments > 0 {
+        // Deliberately NOT folded into the line above: re-recording is the
+        // fix for a missing course and no fix at all for a segment whose
+        // geometry has no direction to compare against.
+        warnings.append("""
+        \(summary.undirectedSegments) matched segment(s) have no usable bearing (coincident \
+        nodes in the region extract), so directional zone(s) there were applied in BOTH \
+        directions — re-recording cannot change this; the region extract would have to.
+        """)
+    }
+    if !warnings.isEmpty {
+        let detail = warnings.joined(separator: "\n")
         if strict { fail("error: " + detail) }
         FileHandle.standardError.write(Data(("warning: " + detail + "\n").utf8))
     }
@@ -67,7 +81,8 @@ do {
     print("""
     \(summary.zonesMatched) zone(s) matched -> \(summary.segmentsMatched) segment(s) \
     (\(summary.zonesUnmatched) zone(s) unmatched), \(summary.changePoints) personal_memory \
-    change point(s), \(summary.ungatedSamples) ungated sample(s) -> \(outputURL.path)
+    change point(s), \(summary.ungatedSamples) ungated sample(s), \
+    \(summary.undirectedSegments) bearingless segment(s) -> \(outputURL.path)
     """)
 } catch {
     fail("error: \(error)")

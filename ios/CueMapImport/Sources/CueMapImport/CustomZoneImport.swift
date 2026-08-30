@@ -454,7 +454,14 @@ public enum CustomZoneImport {
         /// trace carried no course to gate it with, so it was applied both
         /// ways. Non-zero means the answer is the pre-cue#30 one for those
         /// samples — surfaced so a what-if cannot quietly overstate itself.
+        /// Re-recording with GPS fixes this.
         public let ungatedSamples: Int
+        /// Directional zones matched to a segment with no usable bearing
+        /// (degenerate geometry — every node coincident), which therefore
+        /// cannot be gated no matter what the trace carries. Counted apart
+        /// from `ungatedSamples` because the remedy is different: no amount
+        /// of re-recording supplies a bearing a segment does not have.
+        public let undirectedSegments: Int
     }
 
     public static func personalMemoryChangePoints(
@@ -466,6 +473,7 @@ public enum CustomZoneImport {
         var changePoints: [PersonalMemoryChangePoint] = []
         var last: (segmentID: UInt32, state: String, noticeBonusS: UInt8) = (0, "NEUTRAL", 0)
         var ungatedSamples = 0
+        var segmentsWithoutBearing: Set<UInt32> = []
         // Same latch as RideEngine's, corroboration and all: a direction
         // becomes sticky only after `directionLatchSamples` consecutive
         // samples agree, and each sample's own resolution is used until then.
@@ -476,16 +484,36 @@ public enum CustomZoneImport {
         var candidate: [UInt32: (direction: TravelDirection, count: Int)] = [:]
         for sample in samples {
             let observed = observedSegmentIDs[sample.tMs] ?? []
-            latched = latched.filter { observed.contains($0.key) }
-            candidate = candidate.filter { observed.contains($0.key) }
+            // Set, not the raw array: the prune is O(L+M) that way, matching
+            // RideEngine's, and this resolver's whole contract is that the two
+            // behave identically.
+            let inPlay = Set(observed)
+            latched = latched.filter { inPlay.contains($0.key) }
+            candidate = candidate.filter { inPlay.contains($0.key) }
+            // Once per DISTINCT segment, not once per observation — a repeated
+            // segment id would otherwise advance the corroboration counter
+            // twice on one sample, exactly as it did live before #32.
+            var directions: [UInt32: TravelDirection?] = [:]
+            for segmentID in inPlay where directionsBySegment[segmentID] != nil {
+                directions[segmentID] = travelDirection(
+                    on: segmentID, headingDeg: sample.headingDeg,
+                    segmentBearingDeg: segmentBearingDeg,
+                    latched: &latched, candidate: &candidate)
+                if segmentBearingDeg[segmentID] == nil,
+                   directionsBySegment[segmentID] != .both {
+                    segmentsWithoutBearing.insert(segmentID)
+                }
+            }
             var sawUngated = false
             let applicable = observed.filter { segmentID in
-                guard let directions = directionsBySegment[segmentID] else { return false }
-                let direction = travelDirection(on: segmentID, headingDeg: sample.headingDeg,
-                                                segmentBearingDeg: segmentBearingDeg,
-                                                latched: &latched, candidate: &candidate)
-                if direction == nil, directions != .both { sawUngated = true }
-                return directions.applies(to: direction)
+                guard let zoneDirections = directionsBySegment[segmentID] else { return false }
+                let direction = directions[segmentID] ?? nil
+                // Only a MISSING COURSE is reported as ungated. A segment with
+                // no bearing also yields nil, but it is a different problem
+                // with a different remedy, and telling the operator to
+                // re-record would be advice that cannot work.
+                if sample.headingDeg == nil, zoneDirections != .both { sawUngated = true }
+                return zoneDirections.applies(to: direction)
             }.min()
             if sawUngated { ungatedSamples += 1 }
             let current: (segmentID: UInt32, state: String, noticeBonusS: UInt8)
@@ -508,7 +536,8 @@ public enum CustomZoneImport {
             }
         }
         return PersonalMemoryChangePointResult(changePoints: changePoints,
-                                               ungatedSamples: ungatedSamples)
+                                               ungatedSamples: ungatedSamples,
+                                               undirectedSegments: segmentsWithoutBearing.count)
     }
 
     /// Number of consecutive agreeing samples before a segment's direction

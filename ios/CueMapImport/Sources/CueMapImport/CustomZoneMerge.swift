@@ -47,6 +47,10 @@ public enum CueCustomZoneMerge {
         /// trace carried no course (cue#30) — the zone was applied both ways
         /// there, i.e. the pre-cue#30 answer.
         public let ungatedSamples: Int
+        /// Directional zones on a segment with no usable bearing, which no
+        /// re-recording can gate — reported apart from `ungatedSamples`
+        /// because the remedy differs.
+        public let undirectedSegments: Int
     }
 
     /// Merge `customZones` (webmap.dev's export) into `trace`'s
@@ -158,6 +162,7 @@ public enum CueCustomZoneMerge {
             zonesUnmatched: matchResult.unmatchedZoneIDs.count,
             segmentsMatched: directionsBySegment.count,
             changePoints: changePoints.count,
-            ungatedSamples: resolved.ungatedSamples))
+            ungatedSamples: resolved.ungatedSamples,
+            undirectedSegments: resolved.undirectedSegments))
     }
 }
