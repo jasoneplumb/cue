@@ -412,6 +412,16 @@ public enum CustomZoneImport {
     /// "what if this segment had been rider-flagged unsafe all along"
     /// trace stays as small as the live equivalent would have been.
     ///
+    /// A DIRECTIONAL zone is applied only on samples whose course says the
+    /// rider is travelling its way (cue#30), resolved against the same
+    /// node-order bearing and the same latch the live engine uses — the two
+    /// must agree, or a desk what-if stops predicting what the phone did.
+    /// `heading_deg_x10` is optional in the schema, though: a trace without
+    /// it cannot be gated at all, so directional zones fall back to applying
+    /// both ways (the pre-cue#30 answer, so an existing trace's result does
+    /// not silently change) and every such sample is counted in
+    /// `ungatedSamples` for the caller to surface or refuse.
+    ///
     /// Every matched segment resolves to the same UNSAFE state (custom
     /// zones carry no severity/suppress distinction), so ties between
     /// several matched segments observed in the same step break on the
@@ -424,16 +434,56 @@ public enum CustomZoneImport {
     /// personal_memory[] naming a different segment than the live engine
     /// would have chosen for the same ride — a known, bounded divergence
     /// from D5, not a determinism bug in this tool's own output.
+    /// One sample as this resolver reads it: the timestamp it is stamped
+    /// with, and the course the trace recorded for it if any
+    /// (`heading_deg_x10` is optional per NFR-005 — a policy-tuning trace
+    /// carries no heading at all).
+    public struct TraceSample: Equatable, Sendable {
+        public let tMs: UInt32
+        public let headingDeg: Double?
+
+        public init(tMs: UInt32, headingDeg: Double?) {
+            self.tMs = tMs
+            self.headingDeg = headingDeg
+        }
+    }
+
+    public struct PersonalMemoryChangePointResult: Equatable, Sendable {
+        public let changePoints: [PersonalMemoryChangePoint]
+        /// Samples where a DIRECTIONAL zone's segment was observed but the
+        /// trace carried no course to gate it with, so it was applied both
+        /// ways. Non-zero means the answer is the pre-cue#30 one for those
+        /// samples — surfaced so a what-if cannot quietly overstate itself.
+        public let ungatedSamples: Int
+    }
+
     public static func personalMemoryChangePoints(
-        matchedSegmentIDs: Set<UInt32>,
-        sampleTMs: [UInt32],
-        observedSegmentIDs: [UInt32: [UInt32]]
-    ) -> [PersonalMemoryChangePoint] {
+        directionsBySegment: [UInt32: ZoneDirectionMask],
+        samples: [TraceSample],
+        observedSegmentIDs: [UInt32: [UInt32]],
+        segmentBearingDeg: [UInt32: Double]
+    ) -> PersonalMemoryChangePointResult {
         var changePoints: [PersonalMemoryChangePoint] = []
         var last: (segmentID: UInt32, state: String, noticeBonusS: UInt8) = (0, "NEUTRAL", 0)
-        for tMs in sampleTMs {
-            let observed = observedSegmentIDs[tMs] ?? []
-            let applicable = observed.filter { matchedSegmentIDs.contains($0) }.min()
+        var ungatedSamples = 0
+        // Same latch as RideEngine's: a direction is resolved when a segment
+        // first comes into play and held until it stops producing events, so
+        // an offline what-if and the live engine cannot disagree about a
+        // segment whose direction sits near the gate.
+        var latched: [UInt32: TravelDirection] = [:]
+        for sample in samples {
+            let observed = observedSegmentIDs[sample.tMs] ?? []
+            latched = latched.filter { observed.contains($0.key) }
+            var sawUngated = false
+            let applicable = observed.filter { segmentID in
+                guard let directions = directionsBySegment[segmentID] else { return false }
+                let direction = travelDirection(on: segmentID, headingDeg: sample.headingDeg,
+                                                segmentBearingDeg: segmentBearingDeg,
+                                                latched: &latched)
+                if direction == nil, directions != .both { sawUngated = true }
+                return directions.applies(to: direction)
+            }.min()
+            if sawUngated { ungatedSamples += 1 }
             let current: (segmentID: UInt32, state: String, noticeBonusS: UInt8)
             if let applicable {
                 current = (applicable, "UNSAFE", 0)
@@ -448,11 +498,28 @@ public enum CustomZoneImport {
             }
             if current != last {
                 changePoints.append(PersonalMemoryChangePoint(
-                    tMs: tMs, segmentID: current.segmentID,
+                    tMs: sample.tMs, segmentID: current.segmentID,
                     state: current.state, noticeBonusS: current.noticeBonusS))
                 last = current
             }
         }
-        return changePoints
+        return PersonalMemoryChangePointResult(changePoints: changePoints,
+                                               ungatedSamples: ungatedSamples)
+    }
+
+    /// Offline twin of RideEngine.travelDirection: resolve once against the
+    /// segment's node-order bearing, then hold. nil — which
+    /// `ZoneDirectionMask.applies(to:)` reads as "cannot reject anything" —
+    /// when the sample carries no course or the segment has no bearing.
+    private static func travelDirection(
+        on segmentID: UInt32, headingDeg: Double?,
+        segmentBearingDeg: [UInt32: Double],
+        latched: inout [UInt32: TravelDirection]
+    ) -> TravelDirection? {
+        if let existing = latched[segmentID] { return existing }
+        guard let headingDeg, let bearing = segmentBearingDeg[segmentID] else { return nil }
+        let direction = TravelDirection.resolve(headingDeg: headingDeg, alongBearingDeg: bearing)
+        latched[segmentID] = direction
+        return direction
     }
 }

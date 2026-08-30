@@ -428,31 +428,42 @@ final class CustomZoneImportTests: XCTestCase {
 
     // MARK: - personalMemoryChangePoints
 
+    /// These cases are about carry-forward compression, not direction, so
+    /// they use bidirectional zones and headingless samples — the shape every
+    /// pre-cue#30 trace has.
+    private func bidirectionalSamples(_ tMs: [UInt32]) -> [CustomZoneImport.TraceSample] {
+        tMs.map { CustomZoneImport.TraceSample(tMs: $0, headingDeg: nil) }
+    }
+
     func testLogsAnActivationAndADeactivation() {
-        let points = CustomZoneImport.personalMemoryChangePoints(
-            matchedSegmentIDs: [7],
-            sampleTMs: [0, 1000, 2000, 3000],
-            observedSegmentIDs: [1000: [7], 2000: [7]])
-        XCTAssertEqual(points, [
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .both],
+            samples: bidirectionalSamples([0, 1000, 2000, 3000]),
+            observedSegmentIDs: [1000: [7], 2000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints, [
             .init(tMs: 1000, segmentID: 7, state: "UNSAFE", noticeBonusS: 0),
             .init(tMs: 3000, segmentID: 7, state: "NEUTRAL", noticeBonusS: 0),
         ])
     }
 
     func testNoChangePointsWhenTheMatchedSegmentIsNeverObserved() {
-        let points = CustomZoneImport.personalMemoryChangePoints(
-            matchedSegmentIDs: [7],
-            sampleTMs: [0, 1000, 2000],
-            observedSegmentIDs: [1000: [99]])
-        XCTAssertEqual(points, [])
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .both],
+            samples: bidirectionalSamples([0, 1000, 2000]),
+            observedSegmentIDs: [1000: [99]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints, [])
     }
 
     func testConsecutiveSamplesWithTheSameObservationLogOnlyOneChangePoint() {
-        let points = CustomZoneImport.personalMemoryChangePoints(
-            matchedSegmentIDs: [7],
-            sampleTMs: [0, 1000, 2000, 3000],
-            observedSegmentIDs: [0: [7], 1000: [7], 2000: [7], 3000: [7]])
-        XCTAssertEqual(points, [.init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)])
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .both],
+            samples: bidirectionalSamples([0, 1000, 2000, 3000]),
+            observedSegmentIDs: [0: [7], 1000: [7], 2000: [7], 3000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints,
+                       [.init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)])
     }
 
     func testZoneActiveAtTheLastSampleEmitsNoTerminalClearRecord() {
@@ -466,18 +477,112 @@ final class CustomZoneImportTests: XCTestCase {
         // the what-if scenario) was UNSAFE for it. replay_main.c's
         // end-of-trace "carry-forward-active" warning is the deliberate,
         // non-failing signal for this — not a gap to fill.
-        let points = CustomZoneImport.personalMemoryChangePoints(
-            matchedSegmentIDs: [7],
-            sampleTMs: [0, 1000, 2000],
-            observedSegmentIDs: [0: [7], 1000: [7], 2000: [7]])
-        XCTAssertEqual(points, [.init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)])
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .both],
+            samples: bidirectionalSamples([0, 1000, 2000]),
+            observedSegmentIDs: [0: [7], 1000: [7], 2000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints,
+                       [.init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)])
     }
 
     func testTiesBetweenMatchedSegmentsBreakOnSmallestID() {
-        let points = CustomZoneImport.personalMemoryChangePoints(
-            matchedSegmentIDs: [7, 3],
-            sampleTMs: [0],
-            observedSegmentIDs: [0: [7, 3]])
-        XCTAssertEqual(points, [.init(tMs: 0, segmentID: 3, state: "UNSAFE", noticeBonusS: 0)])
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .both, 3: .both],
+            samples: bidirectionalSamples([0]),
+            observedSegmentIDs: [0: [7, 3]],
+            segmentBearingDeg: [7: 90, 3: 90])
+        XCTAssertEqual(resolved.changePoints,
+                       [.init(tMs: 0, segmentID: 3, state: "UNSAFE", noticeBonusS: 0)])
+    }
+
+    // MARK: - personalMemoryChangePoints: direction (cue#30)
+
+    /// Segment 7's node order runs east (bearing 90), so a course of 90 is
+    /// .forward along it and 270 is .backward.
+    private func heading(_ deg: Double, at tMs: [UInt32]) -> [CustomZoneImport.TraceSample] {
+        tMs.map { CustomZoneImport.TraceSample(tMs: $0, headingDeg: deg) }
+    }
+
+    func testDirectionalZoneAppliesOnlyOnSamplesTravellingItsWay() {
+        let withIt = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: heading(90, at: [0, 1000]),
+            observedSegmentIDs: [0: [7], 1000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(withIt.changePoints,
+                       [.init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)])
+        XCTAssertEqual(withIt.ungatedSamples, 0)
+
+        let againstIt = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: heading(270, at: [0, 1000]),
+            observedSegmentIDs: [0: [7], 1000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(againstIt.changePoints, [])
+        XCTAssertEqual(againstIt.ungatedSamples, 0)
+    }
+
+    /// heading_deg_x10 is optional (NFR-005). A trace without it cannot gate
+    /// anything, so a directional zone falls back to the pre-cue#30 answer —
+    /// applied both ways — and every affected sample is counted so the caller
+    /// can warn or refuse rather than quietly overstate the what-if.
+    func testHeadinglessSamplesApplyDirectionalZonesBothWaysAndAreCounted() {
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: bidirectionalSamples([0, 1000, 2000]),
+            observedSegmentIDs: [0: [7], 1000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints, [
+            .init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0),
+            .init(tMs: 2000, segmentID: 7, state: "NEUTRAL", noticeBonusS: 0),
+        ])
+        XCTAssertEqual(resolved.ungatedSamples, 2, "only the samples that observed the segment")
+    }
+
+    func testABidirectionalZoneIsNeverCountedAsUngated() {
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .both],
+            samples: bidirectionalSamples([0, 1000]),
+            observedSegmentIDs: [0: [7], 1000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.ungatedSamples, 0)
+    }
+
+    /// The offline twin of RideEngine's latch: direction is resolved when the
+    /// segment comes into play and held, so a single course spike mid-approach
+    /// cannot flip the zone off and back on.
+    func testDirectionIsLatchedWhileTheSegmentStaysInPlay() {
+        let samples = [
+            CustomZoneImport.TraceSample(tMs: 0, headingDeg: 90),
+            CustomZoneImport.TraceSample(tMs: 1000, headingDeg: 265),
+            CustomZoneImport.TraceSample(tMs: 2000, headingDeg: 90),
+        ]
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: samples,
+            observedSegmentIDs: [0: [7], 1000: [7], 2000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints,
+                       [.init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)])
+    }
+
+    func testASegmentLeavingPlayRelatchesOnItsNextApproach() {
+        let samples = [
+            CustomZoneImport.TraceSample(tMs: 0, headingDeg: 90),
+            CustomZoneImport.TraceSample(tMs: 1000, headingDeg: 90),
+            CustomZoneImport.TraceSample(tMs: 2000, headingDeg: 270),
+        ]
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: samples,
+            // Segment 7 leaves play at t=1000, so t=2000 is a fresh approach
+            // and resolves its own (opposite) direction rather than the held one.
+            observedSegmentIDs: [0: [7], 2000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints, [
+            .init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0),
+            .init(tMs: 1000, segmentID: 7, state: "NEUTRAL", noticeBonusS: 0),
+        ])
     }
 }
