@@ -82,6 +82,29 @@ public final class RideEngine {
     /// recorded on past rides bias live cueing on this one (RFC 0002).
     private let personalMemoryStore: PersonalMemoryStore
     private var lastTMs: UInt32?
+    /// Node-order bearing per segment, built once — the comparand a fix's
+    /// course is resolved against to decide which way the rider is
+    /// travelling a segment whose memory record is direction-gated (cue#30).
+    /// Segments with no bearing (degenerate geometry) are simply absent.
+    private let segmentBearingDeg: [UInt32: Double]
+    /// Travel direction latched per segment while it is in play (cue#30).
+    ///
+    /// Resolved once, when a remembered segment first produces an event, and
+    /// held until it stops producing them — recomputing every sample would
+    /// let course jitter near the 90° gate dither the bias and fill the
+    /// trace's personal_memory[] with change points describing GPS noise.
+    /// Mirrors RouteEventTracker.entryEndpoint, which latches the endpoint a
+    /// zone was entered through for the same reason.
+    ///
+    /// Scope, precisely: this holds the direction for a segment that STAYS in
+    /// play. It cannot help when a course transient is large enough to trip
+    /// RouteEventTracker's own directed approach gate, because that drops the
+    /// route event entirely and there is then no memory to resolve at all —
+    /// pre-existing behavior, unchanged by cue#30 and pinned by
+    /// PersonalMemoryIntegrationTests. What it does guard is the case where
+    /// the approach bearing and the segment's node-order bearing differ, so
+    /// the event survives while the direction sits near the gate.
+    private var latchedDirection: [UInt32: TravelDirection] = [:]
 
     /// `config == nil` applies the spec §8 defaults. `startedAt` is the
     /// ride's wall-clock start, ISO 8601 UTC (caller-formatted so exports
@@ -98,6 +121,14 @@ public final class RideEngine {
         matcher = SegmentMatcher(segments: segments)
         tracker = RouteEventTracker(segments: segments, zones: zones)
         policy = CuePolicy(config: config)
+        segmentBearingDeg = Dictionary(
+            segments.compactMap { segment in
+                segment.nodeOrderBearingDeg.map { (segment.id, $0) }
+            },
+            // Ids are unique by construction (SegmentImporter allocates them
+            // from (way, split)); keeping the first is a defensive tie-break,
+            // not an expected path.
+            uniquingKeysWith: { first, _ in first })
         self.personalMemoryStore = personalMemoryStore
         recorder = RideTraceRecorder(rideID: rideID, startedAt: startedAt,
                                      config: config ?? CuePolicy.defaultConfig(),
@@ -147,7 +178,13 @@ public final class RideEngine {
             heading_deg_x10: UInt16((heading * 10).rounded()) % 3600,
             segment_id: match?.segmentID ?? 0)
 
-        let resolvedMemory = resolveMemory(events: events)
+        let resolvedMemory = resolveMemory(events: events, headingDeg: fixHeading)
+        // Drop latches for segments that left play, so the next approach
+        // resolves its own direction. A segment dropped by the maxEventsPerStep
+        // cap re-latches when it next produces an event — the cap is a wire
+        // constraint, and re-resolving is the same work the first approach did.
+        let inPlay = Set(events.map(\.segment_id))
+        latchedDirection = latchedDirection.filter { inPlay.contains($0.key) }
         let kernelMemory = resolvedMemory.map {
             PersonalMemory(segment_id: $0.segmentID, state: $0.state.rawValue,
                            notice_bonus_s: $0.noticeBonusS)
@@ -247,10 +284,13 @@ public final class RideEngine {
     /// flagged in the implementation plan, not solved here; the fully
     /// general version needs on-demand graph-distance queries against
     /// RouteEventTracker's road graph for arbitrary remembered segments.
-    private func resolveMemory(events: [RouteEvent]) -> ResolvedPersonalMemory? {
+    private func resolveMemory(events: [RouteEvent], headingDeg: Double?) -> ResolvedPersonalMemory? {
         var best: (event: RouteEvent, resolved: ResolvedPersonalMemory)?
         for event in events {
-            guard let resolved = personalMemoryStore.resolved(for: event.segment_id) else { continue }
+            let direction = travelDirection(on: event.segment_id, headingDeg: headingDeg)
+            guard let resolved = personalMemoryStore.resolved(for: event.segment_id,
+                                                              travelling: direction)
+            else { continue }
             if let current = best {
                 // RFC 0002 D5 "multi-segment resolution": unsafe > suppress
                 // > neutral, ties broken by nearest-ahead (smallest
@@ -265,6 +305,29 @@ public final class RideEngine {
             }
         }
         return best?.resolved
+    }
+
+    /// Which way the rider is travelling `segmentID`, latched on first use
+    /// (see `latchedDirection`). nil — which the store reads as "cannot
+    /// reject anything" — when the fix carries no course, or the segment has
+    /// no bearing to compare against; neither case latches, so the direction
+    /// resolves as soon as a usable course arrives.
+    ///
+    /// The comparand is the EVENT's segment, not the matched one: memory
+    /// applies to a segment plus an approach window ahead of it (RFC 0002
+    /// D3), and "forward" is defined by that segment's own node order, so
+    /// judging it against the road the rider currently occupies would be
+    /// meaningless for anything upcoming. On approach this is a heuristic —
+    /// course now versus a segment not yet reached — bounded by the 90° gate
+    /// and by the latch, and degrading at worst to the pre-cue#30 behavior of
+    /// applying the record both ways.
+    private func travelDirection(on segmentID: UInt32,
+                                 headingDeg: Double?) -> TravelDirection? {
+        if let latched = latchedDirection[segmentID] { return latched }
+        guard let headingDeg, let bearing = segmentBearingDeg[segmentID] else { return nil }
+        let direction = TravelDirection.resolve(headingDeg: headingDeg, alongBearingDeg: bearing)
+        latchedDirection[segmentID] = direction
+        return direction
     }
 
     /// The outcome last forwarded to personalMemoryStore per event id — so

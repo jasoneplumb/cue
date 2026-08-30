@@ -110,7 +110,15 @@ public final class RideTraceRecorder {
         records.append(Record(sample: sample, events: events, decision: decision,
                               headingKnown: headingKnown))
         let current: (segmentID: UInt32, state: PersonalMemoryState, noticeBonusS: UInt8)
-        if let resolvedMemory {
+        // A resolution of NEUTRAL + 0 is byte-for-byte equivalent to passing
+        // memory == NULL (RFC 0002 D5), so it is folded into the no-memory
+        // path rather than logged as a change point in its own right — a
+        // record naming a segment while carrying no bias tells replay
+        // nothing. This matters more since cue#30: a direction-gated segment
+        // resolves NEUTRAL on every pass the other way, which would otherwise
+        // put a void record in the trace for each one.
+        if let resolvedMemory,
+           resolvedMemory.state != .neutral || resolvedMemory.noticeBonusS != 0 {
             current = (resolvedMemory.segmentID, resolvedMemory.state, resolvedMemory.noticeBonusS)
         } else if lastLoggedMemory.segmentID != 0 {
             // Clearing an active record: keep ITS segment_id rather than

@@ -110,3 +110,35 @@ public struct ZoneDirectionMask: OptionSet, Codable, Hashable, Sendable {
         return contains(ZoneDirectionMask(direction))
     }
 }
+
+extension RoadSegment {
+    /// Compass bearing of this segment's node order, first node -> last, or
+    /// nil for a degenerate segment (every node coincident) — the comparand
+    /// a rider's course is resolved against to decide which way they are
+    /// travelling it.
+    ///
+    /// The whole segment's chord, not the nearest edge: segments are capped
+    /// near `SegmentImporter.maxSegmentLengthM`, so the chord tracks the road
+    /// closely, and it is the ONLY bearing a consumer without live geometry
+    /// can compute — the `cue-custom-zone-merge` desk tool has the region's
+    /// segments and a trace's heading but no matched edge. One rule keeps a
+    /// desk what-if predicting live behavior, the same discipline that keeps
+    /// SegmentMatcher's constants in step with d6_gpx_sim.py. A segment that
+    /// bends more than the 90° gate could be judged the wrong way at its far
+    /// end; bounded, and rare at this segment length.
+    ///
+    /// Equirectangular with the usual cos(lat) correction, same scale
+    /// constants as SegmentImporter.edgeLengthM — exact enough for a bearing
+    /// at segment scale.
+    public var nodeOrderBearingDeg: Double? {
+        guard let firstLatE7 = latE7.first, let firstLonE7 = lonE7.first,
+              let lastLatE7 = latE7.last, let lastLonE7 = lonE7.last else { return nil }
+        let anchorLat = Double(firstLatE7) / 1e7
+        let northM = (Double(lastLatE7) - Double(firstLatE7)) / 1e7 * 110_540.0
+        let eastM = (Double(lastLonE7) - Double(firstLonE7)) / 1e7
+            * 111_320.0 * cos(anchorLat * .pi / 180)
+        guard northM != 0 || eastM != 0 else { return nil }
+        let bearing = atan2(eastM, northM) * 180 / .pi
+        return bearing < 0 ? bearing + 360 : bearing
+    }
+}
