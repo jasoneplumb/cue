@@ -54,10 +54,20 @@ final class CustomZoneMergeTests: XCTestCase {
     /// 270 westbound. The headingless variant above is what a policy-tuning
     /// trace looks like (heading_deg_x10 is optional per NFR-005).
     private func headedTraceJSON(segmentID: UInt32, headingDegX10: Int) -> Data {
-        let base = String(decoding: traceJSON(segmentID: segmentID), as: UTF8.self)
-        return Data(base.replacingOccurrences(
-            of: "\"speed_cmps\": 500",
-            with: "\"speed_cmps\": 500, \"heading_deg_x10\": \(headingDegX10)").utf8)
+        // Injected by decoding and re-encoding rather than string-replacing
+        // an unrelated field's literal value: keying off "speed_cmps": 500
+        // meant any future sample with a different speed — a stopped one, say
+        // — would silently keep its heading and the test would pass for the
+        // wrong reason.
+        let root = try! JSONSerialization.jsonObject(
+            with: traceJSON(segmentID: segmentID)) as! [String: Any]
+        var mutable = root
+        mutable["samples"] = (root["samples"] as! [[String: Any]]).map { sample -> [String: Any] in
+            var withHeading = sample
+            withHeading["heading_deg_x10"] = headingDegX10
+            return withHeading
+        }
+        return try! JSONSerialization.data(withJSONObject: mutable, options: [.sortedKeys])
     }
 
     private func customZonesJSON() -> Data {
