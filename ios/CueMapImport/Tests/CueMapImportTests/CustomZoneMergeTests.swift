@@ -30,6 +30,46 @@ final class CustomZoneMergeTests: XCTestCase {
         return try XCTUnwrap(segments.first).id
     }
 
+    /// The way runs east (lon 0 -> 0.001), so a zone drawn west-to-east runs
+    /// WITH its segment's node order and one drawn east-to-west runs against.
+    private func directionalZonesJSON(eastbound: Bool) -> Data {
+        let coordinates = eastbound
+            ? "[[0.0003, 0.00001], [0.0007, 0.00001]]"
+            : "[[0.0007, 0.00001], [0.0003, 0.00001]]"
+        return Data("""
+        {
+          "type": "FeatureCollection",
+          "features": [
+            { "type": "Feature",
+              "geometry": { "type": "LineString", "coordinates": \(coordinates) },
+              "properties": { "kind": "custom_zone", "id": "zone-1",
+                              "created_at": "2026-07-22T00:00:00.000Z",
+                              "directional": true } }
+          ]
+        }
+        """.utf8)
+    }
+
+    /// The fixture trace with a course on every sample — 90 is eastbound,
+    /// 270 westbound. The headingless variant above is what a policy-tuning
+    /// trace looks like (heading_deg_x10 is optional per NFR-005).
+    private func headedTraceJSON(segmentID: UInt32, headingDegX10: Int) -> Data {
+        // Injected by decoding and re-encoding rather than string-replacing
+        // an unrelated field's literal value: keying off "speed_cmps": 500
+        // meant any future sample with a different speed — a stopped one, say
+        // — would silently keep its heading and the test would pass for the
+        // wrong reason.
+        let root = try! JSONSerialization.jsonObject(
+            with: traceJSON(segmentID: segmentID)) as! [String: Any]
+        var mutable = root
+        mutable["samples"] = (root["samples"] as! [[String: Any]]).map { sample -> [String: Any] in
+            var withHeading = sample
+            withHeading["heading_deg_x10"] = headingDegX10
+            return withHeading
+        }
+        return try! JSONSerialization.data(withJSONObject: mutable, options: [.sortedKeys])
+    }
+
     private func customZonesJSON() -> Data {
         // Two vertices right on the way's geometry (lon 0.0003-0.0007) snap to it.
         Data("""
@@ -244,5 +284,52 @@ final class CustomZoneMergeTests: XCTestCase {
             }
             XCTAssertTrue(reason.contains("strictly increasing"), "reason was: \(reason)")
         }
+    }
+}
+
+extension CustomZoneMergeTests {
+    // MARK: - Directional zones (cue#30)
+
+    private func mergedStates(zones: Data, trace: Data) throws -> (states: [String], ungated: Int) {
+        let (data, summary) = try CueCustomZoneMerge.merge(
+            trace: trace, customZones: zones, region: regionJSON())
+        let root = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let memory = try XCTUnwrap(root["personal_memory"] as? [[String: Any]])
+        return (memory.compactMap { $0["state"] as? String }, summary.ungatedSamples)
+    }
+
+    func testDirectionalZoneAppliesOnAMatchingCourseOnly() throws {
+        let segmentID = try segmentID()
+        let withIt = try mergedStates(
+            zones: directionalZonesJSON(eastbound: true),
+            trace: headedTraceJSON(segmentID: segmentID, headingDegX10: 900))
+        XCTAssertEqual(withIt.states, ["UNSAFE", "NEUTRAL"])
+        XCTAssertEqual(withIt.ungated, 0)
+
+        let againstIt = try mergedStates(
+            zones: directionalZonesJSON(eastbound: false),
+            trace: headedTraceJSON(segmentID: segmentID, headingDegX10: 900))
+        XCTAssertEqual(againstIt.states, [],
+                       "a zone drawn the other way must not fire on this ride")
+        XCTAssertEqual(againstIt.ungated, 0)
+    }
+
+    func testATraceWithoutHeadingAppliesDirectionalZonesBothWaysAndReportsIt() throws {
+        let segmentID = try segmentID()
+        let merged = try mergedStates(
+            zones: directionalZonesJSON(eastbound: false),
+            trace: traceJSON(segmentID: segmentID))
+        XCTAssertEqual(merged.states, ["UNSAFE", "NEUTRAL"],
+                       "ungatable: falls back to the pre-cue#30 answer rather than guessing")
+        XCTAssertEqual(merged.ungated, 2, "and says so, so the what-if cannot overstate itself")
+    }
+
+    func testABidirectionalZoneOnAHeadinglessTraceReportsNothingUngated() throws {
+        let segmentID = try segmentID()
+        let merged = try mergedStates(
+            zones: customZonesJSON(), trace: traceJSON(segmentID: segmentID))
+        XCTAssertEqual(merged.states, ["UNSAFE", "NEUTRAL"])
+        XCTAssertEqual(merged.ungated, 0)
     }
 }

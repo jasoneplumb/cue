@@ -412,6 +412,16 @@ public enum CustomZoneImport {
     /// "what if this segment had been rider-flagged unsafe all along"
     /// trace stays as small as the live equivalent would have been.
     ///
+    /// A DIRECTIONAL zone is applied only on samples whose course says the
+    /// rider is travelling its way (cue#30), resolved against the same
+    /// node-order bearing and the same latch the live engine uses — the two
+    /// must agree, or a desk what-if stops predicting what the phone did.
+    /// `heading_deg_x10` is optional in the schema, though: a trace without
+    /// it cannot be gated at all, so directional zones fall back to applying
+    /// both ways (the pre-cue#30 answer, so an existing trace's result does
+    /// not silently change) and every such sample is counted in
+    /// `ungatedSamples` for the caller to surface or refuse.
+    ///
     /// Every matched segment resolves to the same UNSAFE state (custom
     /// zones carry no severity/suppress distinction), so ties between
     /// several matched segments observed in the same step break on the
@@ -424,16 +434,107 @@ public enum CustomZoneImport {
     /// personal_memory[] naming a different segment than the live engine
     /// would have chosen for the same ride — a known, bounded divergence
     /// from D5, not a determinism bug in this tool's own output.
+    /// One sample as this resolver reads it: the timestamp it is stamped
+    /// with, and the course the trace recorded for it if any
+    /// (`heading_deg_x10` is optional per NFR-005 — a policy-tuning trace
+    /// carries no heading at all).
+    public struct TraceSample: Equatable, Sendable {
+        public let tMs: UInt32
+        public let headingDeg: Double?
+
+        public init(tMs: UInt32, headingDeg: Double?) {
+            self.tMs = tMs
+            self.headingDeg = headingDeg
+        }
+    }
+
+    public struct PersonalMemoryChangePointResult: Equatable, Sendable {
+        public let changePoints: [PersonalMemoryChangePoint]
+        /// Samples where a DIRECTIONAL zone's segment was observed but the
+        /// trace carried no course to gate it with, so it was applied both
+        /// ways. Non-zero means the answer is the pre-cue#30 one for those
+        /// samples — surfaced so a what-if cannot quietly overstate itself.
+        /// Re-recording with GPS fixes this.
+        public let ungatedSamples: Int
+        /// Directional zones matched to a segment with no usable bearing
+        /// (degenerate geometry — every node coincident), which therefore
+        /// cannot be gated no matter what the trace carries. Counted apart
+        /// from `ungatedSamples` because the remedy is different: no amount
+        /// of re-recording supplies a bearing a segment does not have.
+        public let undirectedSegments: Int
+    }
+
     public static func personalMemoryChangePoints(
-        matchedSegmentIDs: Set<UInt32>,
-        sampleTMs: [UInt32],
-        observedSegmentIDs: [UInt32: [UInt32]]
-    ) -> [PersonalMemoryChangePoint] {
+        directionsBySegment: [UInt32: ZoneDirectionMask],
+        samples: [TraceSample],
+        observedSegmentIDs: [UInt32: [UInt32]],
+        segmentBearingDeg: [UInt32: Double]
+    ) -> PersonalMemoryChangePointResult {
         var changePoints: [PersonalMemoryChangePoint] = []
         var last: (segmentID: UInt32, state: String, noticeBonusS: UInt8) = (0, "NEUTRAL", 0)
-        for tMs in sampleTMs {
-            let observed = observedSegmentIDs[tMs] ?? []
-            let applicable = observed.filter { matchedSegmentIDs.contains($0) }.min()
+        var ungatedSamples = 0
+        var segmentsWithoutBearing: Set<UInt32> = []
+        // Same latch as RideEngine's, corroboration and all: a direction
+        // becomes sticky only after `directionLatchSamples` consecutive
+        // samples agree, and each sample's own resolution is used until then.
+        // Latching on the first sample would let one course spike gate a zone
+        // out for an entire approach. The two implementations must match or
+        // an offline what-if stops predicting what the phone did.
+        var latched: [UInt32: TravelDirection] = [:]
+        var candidate: [UInt32: (direction: TravelDirection, count: Int)] = [:]
+        for sample in samples {
+            let observed = observedSegmentIDs[sample.tMs] ?? []
+            // Set, not the raw array: the prune is O(L+M) that way, matching
+            // RideEngine's, and this resolver's whole contract is that the two
+            // behave identically.
+            let inPlay = Set(observed)
+            latched = latched.filter { inPlay.contains($0.key) }
+            candidate = candidate.filter { inPlay.contains($0.key) }
+            // Once per DISTINCT segment, not once per observation — a repeated
+            // segment id would otherwise advance the corroboration counter
+            // twice on one sample, exactly as it did live before #32.
+            // Value type is non-optional: assigning nil to a Dictionary
+            // subscript REMOVES the key, so [UInt32: TravelDirection?] could
+            // never actually hold a nil value — the annotation promised
+            // something the type cannot do. An absent key already means "no
+            // direction", which is exactly what the lookup below reads.
+            var directions: [UInt32: TravelDirection] = [:]
+            for segmentID in inPlay where directionsBySegment[segmentID] != nil {
+                directions[segmentID] = travelDirection(
+                    on: segmentID, headingDeg: sample.headingDeg,
+                    segmentBearingDeg: segmentBearingDeg,
+                    latched: &latched, candidate: &candidate)
+                if segmentBearingDeg[segmentID] == nil,
+                   directionsBySegment[segmentID] != .both {
+                    segmentsWithoutBearing.insert(segmentID)
+                }
+            }
+            // Counted in its own pass rather than as a side effect inside the
+            // filter below. Set.filter is eager today, so folding the two
+            // together happens to work — and would stop working silently the
+            // moment anyone reached for first(where:) or a lazy sequence.
+            //
+            // Only a MISSING COURSE counts as ungated. A segment with no
+            // bearing also yields a nil direction, but it is a different
+            // problem with a different remedy: telling the operator to
+            // re-record would be advice that cannot work. The two causes have
+            // to stay disjoint for either piece of advice to be worth reading.
+            if inPlay.contains(where: { segmentID in
+                // The RESOLVED direction, not the sample's own course: a
+                // latched segment stays gated on a headingless sample, so
+                // treating "no heading" as "not gated" reported zones as
+                // ungated that the latch had in fact resolved — a false
+                // re-record warning, and a spurious --strict refusal.
+                directions[segmentID] == nil
+                    && (directionsBySegment[segmentID].map { $0 != .both } ?? false)
+                    && segmentBearingDeg[segmentID] != nil
+            }) {
+                ungatedSamples += 1
+            }
+            let applicable = inPlay.filter { segmentID in
+                guard let zoneDirections = directionsBySegment[segmentID] else { return false }
+                return zoneDirections.applies(to: directions[segmentID])
+            }.min()
             let current: (segmentID: UInt32, state: String, noticeBonusS: UInt8)
             if let applicable {
                 current = (applicable, "UNSAFE", 0)
@@ -448,11 +549,50 @@ public enum CustomZoneImport {
             }
             if current != last {
                 changePoints.append(PersonalMemoryChangePoint(
-                    tMs: tMs, segmentID: current.segmentID,
+                    tMs: sample.tMs, segmentID: current.segmentID,
                     state: current.state, noticeBonusS: current.noticeBonusS))
                 last = current
             }
         }
-        return changePoints
+        return PersonalMemoryChangePointResult(changePoints: changePoints,
+                                               ungatedSamples: ungatedSamples,
+                                               undirectedSegments: segmentsWithoutBearing.count)
+    }
+
+    /// Number of consecutive agreeing samples before a segment's direction
+    /// latches. THE definition for both resolvers — RideEngine aliases this
+    /// rather than restating it, so the offline what-if and live cueing
+    /// cannot drift apart. PUBLIC for that reason: the alias crosses a module
+    /// boundary, and an internal constant would be visible only to
+    /// `@testable` importers.
+    public static let directionLatchSamples = 2
+
+    /// Offline twin of RideEngine.travelDirection: this sample's own
+    /// resolution against the segment's node-order bearing until
+    /// `directionLatchSamples` consecutive samples agree, the latched one
+    /// after. nil — which `ZoneDirectionMask.applies(to:)` reads as "cannot
+    /// reject anything" — only when there is nothing to measure: no course on
+    /// the sample, or no bearing for the segment.
+    private static func travelDirection(
+        on segmentID: UInt32, headingDeg: Double?,
+        segmentBearingDeg: [UInt32: Double],
+        latched: inout [UInt32: TravelDirection],
+        candidate: inout [UInt32: (direction: TravelDirection, count: Int)]
+    ) -> TravelDirection? {
+        if let existing = latched[segmentID] { return existing }
+        guard let headingDeg, let bearing = segmentBearingDeg[segmentID] else { return nil }
+        let direction = TravelDirection.resolve(headingDeg: headingDeg, alongBearingDeg: bearing)
+        // One lookup, no force-unwrap — the same shape RideEngine's twin uses.
+        // The two-subscript form was sound only because the condition and the
+        // unwrap sat in one expression, which any refactor could separate.
+        let count = candidate[segmentID]
+            .map { $0.direction == direction ? $0.count + 1 : 1 } ?? 1
+        if count >= directionLatchSamples {
+            candidate[segmentID] = nil
+            latched[segmentID] = direction
+        } else {
+            candidate[segmentID] = (direction, count)
+        }
+        return direction
     }
 }

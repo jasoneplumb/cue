@@ -43,6 +43,14 @@ public enum CueCustomZoneMerge {
         public let zonesUnmatched: Int
         public let segmentsMatched: Int
         public let changePoints: Int
+        /// Samples where a directional zone could not be gated because the
+        /// trace carried no course (cue#30) — the zone was applied both ways
+        /// there, i.e. the pre-cue#30 answer.
+        public let ungatedSamples: Int
+        /// Directional zones on a segment with no usable bearing, which no
+        /// re-recording can gate — reported apart from `ungatedSamples`
+        /// because the remedy differs.
+        public let undirectedSegments: Int
     }
 
     /// Merge `customZones` (webmap.dev's export) into `trace`'s
@@ -66,11 +74,17 @@ public enum CueCustomZoneMerge {
             throw CueCustomZoneMergeError.malformedCustomZones(String(describing: error))
         }
         let matchResult = CustomZoneImport.matchSegments(for: features, segments: segments)
-        // Directions are carried but not yet consulted here — gating a
-        // desk what-if needs the trace's own per-sample heading, which is
-        // cue#30 Phase 4. Until then a directional zone merges exactly as a
-        // bidirectional one does, i.e. as it did before cue#30.
-        let matchedSegmentIDs = Set(matchResult.directionsBySegment.keys)
+        let directionsBySegment = matchResult.directionsBySegment
+        // Node-order bearings for the matched segments only — the comparand a
+        // sample's course is resolved against, and the same one RideEngine
+        // uses, so this what-if and the live engine agree.
+        var segmentBearingDeg: [UInt32: Double] = [:]
+        for segment in segments where directionsBySegment[segment.id] != nil {
+            // A degenerate segment yields nil, which this assignment leaves
+            // ABSENT from the map — exactly right: no bearing means no
+            // direction to resolve, and the resolver reads that as ungated.
+            segmentBearingDeg[segment.id] = segment.nodeOrderBearingDeg
+        }
 
         let jsonObject: Any
         do {
@@ -87,13 +101,18 @@ public enum CueCustomZoneMerge {
         guard let samplesArray = root["samples"] as? [[String: Any]] else {
             throw CueCustomZoneMergeError.malformedTrace("missing or non-array samples")
         }
-        let sampleTMs: [UInt32] = try samplesArray.map { sample in
+        let samples: [CustomZoneImport.TraceSample] = try samplesArray.map { sample in
             guard let number = sample["t_ms"] as? NSNumber,
                   let value = UInt32(exactly: number) else {
                 throw CueCustomZoneMergeError.malformedTrace("sample missing/invalid t_ms")
             }
-            return value
+            // heading_deg_x10 is optional (NFR-005): absent simply means the
+            // sample cannot gate a directional zone, not that it is malformed.
+            let headingDeg = (sample["heading_deg_x10"] as? NSNumber)
+                .map { $0.doubleValue / 10 }
+            return CustomZoneImport.TraceSample(tMs: value, headingDeg: headingDeg)
         }
+        let sampleTMs = samples.map(\.tMs)
         if let first = sampleTMs.first {
             var prev = first
             for tMs in sampleTMs.dropFirst() {
@@ -122,9 +141,10 @@ public enum CueCustomZoneMerge {
             observedSegmentIDs[tMs, default: []].append(segmentID)
         }
 
-        let changePoints = CustomZoneImport.personalMemoryChangePoints(
-            matchedSegmentIDs: matchedSegmentIDs, sampleTMs: sampleTMs,
-            observedSegmentIDs: observedSegmentIDs)
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: directionsBySegment, samples: samples,
+            observedSegmentIDs: observedSegmentIDs, segmentBearingDeg: segmentBearingDeg)
+        let changePoints = resolved.changePoints
 
         var output = root
         output["schema_version"] = 2
@@ -140,7 +160,9 @@ public enum CueCustomZoneMerge {
         return (data, Summary(
             zonesMatched: matchResult.matches.count,
             zonesUnmatched: matchResult.unmatchedZoneIDs.count,
-            segmentsMatched: matchedSegmentIDs.count,
-            changePoints: changePoints.count))
+            segmentsMatched: directionsBySegment.count,
+            changePoints: changePoints.count,
+            ungatedSamples: resolved.ungatedSamples,
+            undirectedSegments: resolved.undirectedSegments))
     }
 }

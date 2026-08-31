@@ -126,7 +126,12 @@ public final class RideEngine {
 
     /// Consecutive agreeing samples before a segment's direction latches —
     /// mirrors SegmentMatcher.hysteresisSamples, for the same reason.
-    static let directionLatchSamples = 2
+    ///
+    /// Aliased rather than restated: the offline resolver must latch on the
+    /// same count or a desk what-if stops predicting live behavior, and two
+    /// constants kept equal by a test only hold for someone who runs it.
+    /// Sharing the declaration makes disagreement unrepresentable.
+    static let directionLatchSamples = CustomZoneImport.directionLatchSamples
 
     /// `config == nil` applies the spec §8 defaults. `startedAt` is the
     /// ride's wall-clock start, ISO 8601 UTC (caller-formatted so exports
