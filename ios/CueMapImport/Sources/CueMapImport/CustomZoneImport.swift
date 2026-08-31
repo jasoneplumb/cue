@@ -560,10 +560,11 @@ public enum CustomZoneImport {
     }
 
     /// Number of consecutive agreeing samples before a segment's direction
-    /// latches. Mirrors RideEngine.directionLatchSamples — change BOTH or a
-    /// desk what-if stops predicting live behavior. PUBLIC because that is a
-    /// contract between two modules, and an internal constant states it only
-    /// where `@testable` can see it.
+    /// latches. THE definition for both resolvers — RideEngine aliases this
+    /// rather than restating it, so the offline what-if and live cueing
+    /// cannot drift apart. PUBLIC for that reason: the alias crosses a module
+    /// boundary, and an internal constant would be visible only to
+    /// `@testable` importers.
     public static let directionLatchSamples = 2
 
     /// Offline twin of RideEngine.travelDirection: this sample's own
