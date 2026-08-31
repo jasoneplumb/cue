@@ -16,6 +16,11 @@ documentation lives inline with the code using intent headers.
 | [0001-project-name.md](rfcs/0001-project-name.md) | Project naming — candidates and tradeoffs |
 | [0002-personal-route-memory.md](rfcs/0002-personal-route-memory.md) | Personal route memory (spec §9) — store, derivation, kernel surface, replay |
 | [0003-ios-architecture.md](rfcs/0003-ios-architecture.md) | Phase 1 iOS + watchOS architecture — OSM-snapshot events, SPM kernel, watch cue path |
+| [0004-perceptible-cue-haptic.md](rfcs/0004-perceptible-cue-haptic.md) | Watch haptic pattern — what a cue has to feel like to be noticed |
+| [0005-phone-audible-chime.md](rfcs/0005-phone-audible-chime.md) | Phone chime as a second delivery channel |
+| [0006-pico-cue-delivery.md](rfcs/0006-pico-cue-delivery.md) | Kernel-on-Pico cue delivery — BLE link, wire codec, on-target certification |
+| [0007-h2-cue-miniaturization.md](rfcs/0007-h2-cue-miniaturization.md) | Miniaturized cue device — ESP32-H2, LiPo, and the loudness question |
+| [0008-directional-custom-zones.md](rfcs/0008-directional-custom-zones.md) | Directional custom zones — a drawn zone applies only riding the way it was drawn |
 
 ## Engineering Docs
 

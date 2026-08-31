@@ -6,7 +6,7 @@ The repo ships two export tools whose GeoJSON output loads directly into
 | Overlay (webmap.dev)      | Exporter                             | Shows                                                    |
 | -------------------------- | ------------------------------------ | -------------------------------------------------------- |
 | **Squeeze zones**          | `cue-zone-export` (webmap.dev#227)   | Where the imported region *would* cue — the static, OSM-scored zones |
-| **Custom squeeze zones**   | *(none — drawn in webmap.dev itself)* | Zones you draw by hand on the map — rendered dashed blue so they're never mistaken for the scorer's output |
+| **Custom squeeze zones**   | *(none — drawn in webmap.dev itself)* | Zones you draw by hand on the map — rendered dashed blue so they're never mistaken for the scorer's output, optionally **directional** (RFC 0008) so a zone only applies riding the way you drew it |
 | **Cue events**             | `cue-events-export` (webmap.dev#231) | What one ride actually *did* — fired cues, their grades, delivery, and rider markers |
 
 Loaded together they close the §13 tuning loop visually: the derived zones
@@ -80,7 +80,45 @@ mapped in enough detail).
    overlay's severity palette (yellow/orange/red) and the Cue events
    overlay's outcome palette, so "mine" and "the scorer's" are never
    ambiguous at a glance.
-4. Tap a drawn zone to edit its label or delete it.
+4. Tap a drawn zone to edit its label, mark it **directional**, reverse
+   it, or delete it.
+
+### Directional zones (RFC 0008)
+
+A zone applies in both directions by default. Tick **Directional** in its
+popup and it applies only while you are riding the way you drew it —
+first vertex to last — so a squeeze that only bites descending stops
+biasing the climb, and two zones on the same road can say different
+things. Directional zones draw an arrowhead per segment showing which
+way they run; **Reverse** flips one drawn the wrong way round (the only
+geometry edit this overlay has — everything else is still delete and
+redraw).
+
+Alignment is generous on purpose: anything within 90° of the road's
+direction counts as "with it". That is enough to tell coming from going,
+and loose enough not to drop cues where a road bends or where your
+course and the road legitimately differ on approach.
+
+A zone with no `directional` property — every file exported before this
+existed — is bidirectional, unchanged.
+
+**In the app**, a directional zone is only applied on the passes it
+matches. Note the app decides direction from your GPS course, so at a
+standstill (no course) it applies the zone rather than guessing.
+
+**In `cue-custom-zone-merge`**, gating needs the trace's own
+`heading_deg_x10`, which is optional — a policy-tuning trace has none.
+Directional zones then apply **both ways** (the pre-RFC-0008 answer, so
+an old trace's result does not silently change), the affected sample
+count is reported, and `--strict` refuses the merge instead:
+
+```
+2 zone(s) matched -> 3 segment(s) (0 zone(s) unmatched), 4 personal_memory change point(s), 812 ungated sample(s)
+```
+
+A non-zero ungated count means that what-if overstates its directional
+zones by whatever the reverse passes contribute. Re-record the ride with
+the debug-GPS toggle on for a gated answer.
 
 Custom zones persist in the browser's localStorage, same as the other
 overlays. The layers-control row also has **Export** (downloads the set
@@ -89,9 +127,12 @@ this **replaces** the current set, the same contract the other overlays
 use for "load a different file").
 
 This file now has two cue-side consumers (RFC 0002 Personal Route
-Memory), both treating a custom zone the same way as an in-ride
-"unsafe here" marker tap — no new derivation logic, just another
-`marker_count` contributor:
+Memory). Both treat a custom zone as the same kind of rider judgment as
+an in-ride "unsafe here" marker tap, but no longer as the same record:
+RFC 0008 gave a zone its own direction-carrying field, since a tap is
+about the place and a zone is about a direction through it. A tap you
+make during a ride you then discard can no longer disturb an imported
+zone, and re-importing a file is idempotent.
 
 - **Live:** the app's "Import custom zones…" action (Personal memory
   section, below Region) snaps the file to imported segments and folds

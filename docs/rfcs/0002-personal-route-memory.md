@@ -5,6 +5,14 @@
 - **Date:** 2026-07-08
 - **Closes:** #11
 
+**Amended by [RFC 0008](0008-directional-custom-zones.md)** (directional
+custom zones): D1's record gains `unsafe_dir_mask`, and D2's "markers
+dominate" rule now distinguishes the two marker sources it deliberately
+collapsed here. An in-ride tap still dominates omnidirectionally; an
+imported custom zone carries a direction, no longer contributes to
+`marker_count`, and applies only when the rider is travelling its way. The
+D7 budget is unchanged (17 B -> 18 B packed, still rounding to 20 B).
+
 **Implementation deviations from this design:**
 
 - D5's `SUPPRESS` gate is implemented as raising the effective severity
