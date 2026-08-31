@@ -209,13 +209,17 @@ public final class RideEngine {
         // shape NFR-003 exists to prevent the moment it stops ignoring it.
         // A direction-gated segment resolves NEUTRAL on every pass the other
         // way, so this is now the common case rather than a corner.
-        let resolvedMemory = resolveMemory(events: events, headingDeg: fixHeading)
+        // Built once and threaded through: two calls, however identical,
+        // reintroduce the divergence the single definition exists to remove
+        // the moment either call site's input is transformed first.
+        let inPlay = segmentsInPlay(events)
+        let resolvedMemory = resolveMemory(events: events, inPlay: inPlay,
+                                           headingDeg: fixHeading)
             .flatMap { $0.state == .neutral && $0.noticeBonusS == 0 ? nil : $0 }
         // Drop latches for segments that left play, so the next approach
         // resolves its own direction. A segment dropped by the maxEventsPerStep
         // cap re-latches when it next produces an event — the cap is a wire
         // constraint, and re-resolving is the same work the first approach did.
-        let inPlay = segmentsInPlay(events)
         latchedDirection = latchedDirection.filter { inPlay.contains($0.key) }
         directionCandidate = directionCandidate.filter { inPlay.contains($0.key) }
         let kernelMemory = resolvedMemory.map {
@@ -317,7 +321,8 @@ public final class RideEngine {
     /// flagged in the implementation plan, not solved here; the fully
     /// general version needs on-demand graph-distance queries against
     /// RouteEventTracker's road graph for arbitrary remembered segments.
-    private func resolveMemory(events: [RouteEvent], headingDeg: Double?) -> ResolvedPersonalMemory? {
+    private func resolveMemory(events: [RouteEvent], inPlay: Set<UInt32>,
+                               headingDeg: Double?) -> ResolvedPersonalMemory? {
         // Once per DISTINCT segment, not once per event. Two events can name
         // the same segment in one step (overlapping zones), and resolving per
         // event would advance the corroboration counter twice on one fix —
@@ -327,15 +332,13 @@ public final class RideEngine {
         // promised something the type cannot do. An absent key already means
         // "no direction".
         var directions: [UInt32: TravelDirection] = [:]
-        for segmentID in segmentsInPlay(events) {
+        for segmentID in inPlay {
             directions[segmentID] = travelDirection(on: segmentID, headingDeg: headingDeg)
         }
         var best: (event: RouteEvent, resolved: ResolvedPersonalMemory)?
         for event in events {
-            // flatMap, not `?? nil`: both collapse the double Optional a
-            // dictionary lookup of an Optional value produces, but `?? nil`
-            // reads like a guard against a missing key and invites someone to
-            // "simplify" it into a force-unwrap.
+            // Absent means "no direction resolved this step", which the
+            // store reads as a gate that cannot reject anything.
             let direction = directions[event.segment_id]
             guard let resolved = personalMemoryStore.resolved(for: event.segment_id,
                                                               travelling: direction)

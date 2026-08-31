@@ -367,6 +367,17 @@ public final class PersonalMemoryStore {
     /// This is what the separate zone field (cue#30) buys that a shared
     /// `marker_count` could not: zone evidence can be cleared without
     /// touching anything the rider did during a ride.
+    ///
+    /// KNOWN GAP — records written BEFORE cue#30 are invisible to the
+    /// departure check. The old import path only bumped `marker_count` and
+    /// left no mask, so a segment imported by the previous app version, then
+    /// removed from the file and re-imported, stays flagged: `marker_count`
+    /// still resolves unsafe omnidirectionally, and nothing here can see that
+    /// a zone put it there. This is not fixable in the store — `marker_count`
+    /// conflates old imports with in-ride taps, and clearing it wholesale
+    /// would delete a rider's own markers. Re-importing cannot undo it; only
+    /// a store reset would. Bounded to segments imported before the upgrade,
+    /// and conservative in direction (an extra cue, never a missed one).
     public func replaceUnsafeZones(directionsBySegment: [UInt32: ZoneDirectionMask]) {
         lock.lock(); defer { lock.unlock() }
         // Keys collected FIRST: storePruningIfEmpty writes to
