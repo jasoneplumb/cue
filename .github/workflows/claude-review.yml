@@ -27,6 +27,31 @@ jobs:
         id: start
         run: echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
+      # Follow-up rounds read only what changed since the last verdict. Every
+      # round used to re-read the whole PR, so a one-line fix cost as much as
+      # the original review — the dominant cost once a PR takes several
+      # rounds. The baseline comes from a marker the verdict comment carries;
+      # no marker, or one that is not an ancestor of this head (force-push,
+      # rebase), falls back to a full review.
+      - name: Find last reviewed SHA
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          sha=$(gh api "repos/${{ github.repository }}/issues/$PR/comments?per_page=100" \
+            --jq '[.[] | select(.body | test("reviewed-sha: [0-9a-f]{7,40}"))] | last | .body // ""' \
+            | grep -oE 'reviewed-sha: [0-9a-f]{7,40}' | tail -1 | awk '{print $2}' || true)
+          if [ -n "$sha" ] \
+             && git cat-file -e "${sha}^{commit}" 2>/dev/null \
+             && git merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then
+            echo "scope=INCREMENTAL ROUND. A previous round already reviewed this PR up to commit ${sha}. Review ONLY what changed since then — run 'git diff ${sha}...HEAD' to see it — plus any context you need to judge those changes. Do not re-report findings about untouched code." >> "$GITHUB_OUTPUT"
+            echo "incremental review since $sha"
+          else
+            echo "scope=FIRST ROUND for this PR. Review the full diff." >> "$GITHUB_OUTPUT"
+            echo "full review (no usable baseline)"
+          fi
+
       # In agent mode (custom prompt) the action does NOT inject PR context —
       # the prompt must name the repo and PR explicitly, or Claude has nothing
       # to review and exits after a few turns without posting (pattern learned
@@ -37,6 +62,8 @@ jobs:
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
+
+            ${{ steps.baseline.outputs.scope }}
 
             Review this pull request for:
             - Logic errors and edge cases
@@ -52,8 +79,10 @@ jobs:
 
             Use `mcp__github_inline_comment__create_inline_comment` (with `confirmed: true`) to post findings on specific lines.
             Use `gh pr comment` to post a summary comment starting with "🔍 Review verdict: N findings" — post it even when N is 0.
+            End that summary comment with this exact line, which records what this round covered so the next one can review only the delta:
+            <!-- reviewed-sha: ${{ github.event.pull_request.head.sha }} -->
             Only post GitHub comments — do not output review findings as plain messages.
-          claude_args: '--model claude-sonnet-4-6 --max-turns 25 --allowedTools "Read,Grep,Glob,Bash(gh:*),Bash(git:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),mcp__github_inline_comment__create_inline_comment"'
+          claude_args: '--model claude-sonnet-4-6 --max-turns 10 --allowedTools "Read,Grep,Glob,Bash(gh:*),Bash(git:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),mcp__github_inline_comment__create_inline_comment"'
 
       # Tripwire: a "successful" review that posted nothing is a vacuous gate.
       # The prompt requires a verdict comment even with zero findings, so zero
