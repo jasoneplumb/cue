@@ -56,6 +56,11 @@ public enum SqueezeScorer {
     static let severityAtFloor: UInt8 = 180      // 40–44 mph
     static let confidenceExplicit: UInt8 = 190   // tagged cycleway/shoulder=no
     static let confidenceMeaningfulAbsence: UInt8 = 165  // untagged, covered class
+    /// Untagged on a sparsely tagged class, but the rider drew a custom zone
+    /// over it (#38). Same confidence as a well-covered absence, not the
+    /// higher explicit-tag value: the rider's drawing substitutes for the
+    /// coverage evidence that is missing, it does not become a survey.
+    static let confidenceRiderAsserted: UInt8 = 165
 
     /// All three §7 evidence bits — the qualification rule is their
     /// conjunction, so every zone carries the full mask. Values come from
@@ -65,11 +70,19 @@ public enum SqueezeScorer {
         | CUE_REASON_HIGH_SPEED_CONTEXT)
 
     /// Score the imported region. Deterministic for identical input.
-    public static func scoreZones(from segments: [RoadSegment]) -> [SqueezeZone] {
+    ///
+    /// `riderAsserted` names segments the rider has drawn a custom zone over.
+    /// They satisfy the meaningful-absence requirement that a sparsely tagged
+    /// class otherwise fails (#38) — see `score`. Empty by default, so a
+    /// caller with no custom zones scores exactly as before.
+    public static func scoreZones(from segments: [RoadSegment],
+                                  riderAsserted: Set<UInt32> = []) -> [SqueezeZone] {
         let coverage = ridingSpaceTagCoverage(byClass: segments)
         var scored: [UInt32: (RoadSegment, severity: UInt8, confidence: UInt8)] = [:]
         for segment in segments {
-            guard let result = score(segment, coverage: coverage) else { continue }
+            guard let result = score(segment, coverage: coverage,
+                                     riderAsserted: riderAsserted.contains(segment.id))
+            else { continue }
             scored[segment.id] = (segment, result.severity, result.confidence)
         }
         return mergeZones(scored)
@@ -79,7 +92,7 @@ public enum SqueezeScorer {
     /// tag (positive or explicit-no). Segment-weighted: long ways split
     /// into more segments and count proportionally more, approximating
     /// length weighting without geometry math.
-    static func ridingSpaceTagCoverage(byClass segments: [RoadSegment]) -> [String: Double] {
+    public static func ridingSpaceTagCoverage(byClass segments: [RoadSegment]) -> [String: Double] {
         var total: [String: Int] = [:]
         var tagged: [String: Int] = [:]
         for segment in segments {
@@ -94,7 +107,15 @@ public enum SqueezeScorer {
     }
 
     /// One segment's §7 conjunction, or nil (no event — NFR-001 direction).
-    static func score(_ segment: RoadSegment, coverage: [String: Double])
+    ///
+    /// `riderAsserted` (#38) stands in for the coverage evidence a sparsely
+    /// tagged class cannot supply. It is deliberately narrow: it substitutes
+    /// for MISSING evidence, never contradicts present evidence. A segment
+    /// tagged with real riding space still returns nil however emphatically
+    /// the rider drew over it, and the class, lane and speed gates are
+    /// untouched — a drawn zone on a residential street still does not score.
+    static func score(_ segment: RoadSegment, coverage: [String: Double],
+                      riderAsserted: Bool = false)
         -> (severity: UInt8, confidence: UInt8)? {
         let attrs = segment.attributes
         guard arterialClasses.contains(attrs.highway),
@@ -107,12 +128,62 @@ public enum SqueezeScorer {
         case .explicitNone:
             confidence = confidenceExplicit
         case .untagged:
-            guard coverage[attrs.highway, default: 0] >= meaningfulAbsenceCoverage else {
-                return nil  // silence on a sparsely tagged class means nothing
+            if riderAsserted {
+                // The rider drew a zone here. Silence in OSM still means
+                // nothing, but the rider's own judgment is the evidence the
+                // tags were supposed to carry — which is what the custom-zone
+                // overlay was documented to be for, and could not do while
+                // this gate rejected every unscored road (#38).
+                confidence = confidenceRiderAsserted
+            } else {
+                guard coverage[attrs.highway, default: 0] >= meaningfulAbsenceCoverage else {
+                    return nil  // silence on a sparsely tagged class means nothing
+                }
+                confidence = confidenceMeaningfulAbsence
             }
-            confidence = confidenceMeaningfulAbsence
         }
         return (mph >= 45 ? severityAtHighSpeed : severityAtFloor, confidence)
+    }
+
+    /// Why `score` returned nil for this segment, or nil when it scored.
+    /// Human-readable and for diagnostics only — no caller branches on it.
+    ///
+    /// Exists because "my drawn zone does nothing" has five different causes
+    /// with five different remedies (redraw it, edit OSM, accept the scorer's
+    /// judgment, nothing), and without this the operator cannot tell them
+    /// apart except by reading the scorer (#38).
+    public static func rejectionReason(_ segment: RoadSegment,
+                                       coverage: [String: Double],
+                                       riderAsserted: Bool = false) -> String? {
+        let attrs = segment.attributes
+        guard arterialClasses.contains(attrs.highway) else {
+            return "highway=\(attrs.highway) is not an arterial class"
+        }
+        guard let lanes = attrs.lanes else {
+            return "no lanes tag — the narrow-lane proxy has nothing to read"
+        }
+        guard lanes <= maxSqueezeLanes else {
+            return "lanes=\(lanes) exceeds \(maxSqueezeLanes): not the narrow-lane case"
+        }
+        guard let mph = attrs.maxspeedMph else {
+            return "no maxspeed tag — no basis for high-speed context or severity"
+        }
+        guard mph >= minSqueezeMph else {
+            return "maxspeed=\(mph) mph is below the \(minSqueezeMph) mph floor"
+        }
+        switch attrs.ridingSpace {
+        case .dedicatedSpace:
+            return "tagged with dedicated riding space — not a squeeze"
+        case .explicitNone, .untagged:
+            if attrs.ridingSpace == .untagged, !riderAsserted,
+               coverage[attrs.highway, default: 0] < meaningfulAbsenceCoverage {
+                return "untagged riding space on a class tagged "
+                    + String(format: "%.0f%%", coverage[attrs.highway, default: 0] * 100)
+                    + " in this region (needs \(Int(meaningfulAbsenceCoverage * 100))%) "
+                    + "— draw a custom zone over it to assert the absence yourself"
+            }
+            return nil
+        }
     }
 
     /// Merge contiguous qualifying segments (shared boundary nodes) into

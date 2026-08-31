@@ -147,4 +147,100 @@ final class SqueezeScorerTests: XCTestCase {
         XCTAssertEqual(SqueezeScorer.scoreZones(from: segments),
                        SqueezeScorer.scoreZones(from: segments))
     }
+
+    // MARK: - Rider-asserted scoring (#38)
+
+    /// The reported failure: a whole region where no class clears the
+    /// meaningful-absence bar, so nothing scores and a drawn zone has no
+    /// event to attach to — inert on exactly the roads the overlay exists
+    /// for. One rider-asserted segment is enough to produce a zone.
+    func testRiderAssertionQualifiesASegmentASparselyTaggedClassCannot() {
+        // Untagged secondary, no riding-space tags anywhere: coverage 0.0.
+        let segments = [
+            segment(id: 1, nodes: [10, 11]),
+            segment(id: 2, nodes: [11, 12]),
+        ]
+        XCTAssertTrue(SqueezeScorer.scoreZones(from: segments).isEmpty,
+                      "baseline: a sparsely tagged class scores nothing")
+
+        let withAssertion = SqueezeScorer.scoreZones(from: segments, riderAsserted: [1])
+        XCTAssertEqual(withAssertion.count, 1)
+        XCTAssertEqual(withAssertion[0].segmentIDs, [1])
+        XCTAssertEqual(withAssertion[0].confidence, SqueezeScorer.confidenceRiderAsserted)
+    }
+
+    /// Substitutes for MISSING evidence, never contradicts present evidence:
+    /// where OSM says there is riding space, drawing over it changes nothing.
+    func testRiderAssertionCannotOverrideTaggedRidingSpace() {
+        let withBikeLane = [segment(id: 1, nodes: [10, 11],
+                                    ridingSpace: ["cycleway": "lane"])]
+        XCTAssertTrue(SqueezeScorer.scoreZones(from: withBikeLane, riderAsserted: [1]).isEmpty)
+    }
+
+    /// The class, lane and speed gates are untouched — this is a narrow fix
+    /// for the absence gate, not a rider override of the whole conjunction.
+    func testRiderAssertionDoesNotBypassTheClassLaneOrSpeedGates() {
+        let residential = [segment(id: 1, nodes: [10, 11], highway: "residential")]
+        let tooManyLanes = [segment(id: 2, nodes: [10, 11], lanes: 4)]
+        let tooSlow = [segment(id: 3, nodes: [10, 11], mph: 25)]
+        for (name, segs, id) in [("residential", residential, UInt32(1)),
+                                 ("4 lanes", tooManyLanes, UInt32(2)),
+                                 ("25 mph", tooSlow, UInt32(3))] {
+            XCTAssertTrue(SqueezeScorer.scoreZones(from: segs, riderAsserted: [id]).isEmpty,
+                          "\(name) must not score on a rider assertion alone")
+        }
+    }
+
+    /// An unasserted segment on a well-covered class still scores on the
+    /// absence rule, and keeps its own confidence — the new path is additive.
+    func testAWellCoveredClassStillScoresWithoutAnyAssertion() {
+        let segments = [
+            segment(id: 1, nodes: [10, 11]),
+            segment(id: 2, nodes: [11, 12], ridingSpace: ["cycleway": "no"]),
+            segment(id: 3, nodes: [12, 13], ridingSpace: ["cycleway": "no"]),
+            segment(id: 4, nodes: [13, 14], ridingSpace: ["cycleway": "no"]),
+        ]
+        let zones = SqueezeScorer.scoreZones(from: segments)
+        XCTAssertEqual(zones.count, 1, "coverage is 0.75 — the absence rule applies")
+        XCTAssertEqual(zones[0].segmentIDs, [1, 2, 3, 4])
+    }
+
+    func testScoringIsUnchangedWhenNothingIsAsserted() {
+        let segments = [
+            segment(id: 1, nodes: [10, 11], ridingSpace: ["cycleway": "no"]),
+            segment(id: 2, nodes: [11, 12], ridingSpace: ["cycleway": "no"]),
+        ]
+        XCTAssertEqual(SqueezeScorer.scoreZones(from: segments),
+                       SqueezeScorer.scoreZones(from: segments, riderAsserted: []))
+    }
+
+    // MARK: - rejectionReason diagnostics (#38)
+
+    func testRejectionReasonNamesEachGateItFailed() {
+        let coverage = ["secondary": 0.0]
+        func why(_ seg: RoadSegment, asserted: Bool = true) -> String {
+            SqueezeScorer.rejectionReason(seg, coverage: coverage, riderAsserted: asserted) ?? ""
+        }
+        XCTAssertTrue(why(segment(id: 1, nodes: [1, 2], highway: "residential"))
+            .contains("not an arterial"))
+        XCTAssertTrue(why(segment(id: 2, nodes: [1, 2], lanes: 3)).contains("lanes=3"))
+        XCTAssertTrue(why(segment(id: 3, nodes: [1, 2], lanes: nil)).contains("no lanes tag"))
+        XCTAssertTrue(why(segment(id: 4, nodes: [1, 2], mph: 25)).contains("below the 40 mph"))
+        XCTAssertTrue(why(segment(id: 5, nodes: [1, 2], mph: nil)).contains("no maxspeed"))
+        XCTAssertTrue(why(segment(id: 6, nodes: [1, 2],
+                                  ridingSpace: ["cycleway": "lane"])).contains("dedicated"))
+    }
+
+    /// The reported case: a zone drawn where a 2-lane and a 3-lane stretch
+    /// meet snaps to both. The 3-lane one is correctly inert, and saying so
+    /// is the difference between "my zone is broken" and "that half of it is
+    /// a road the scorer deliberately excludes".
+    func testAQualifyingSegmentHasNoRejectionReason() {
+        let coverage = ["secondary": 0.0]
+        XCTAssertNil(SqueezeScorer.rejectionReason(segment(id: 1, nodes: [1, 2]),
+                                                   coverage: coverage, riderAsserted: true))
+        XCTAssertNotNil(SqueezeScorer.rejectionReason(segment(id: 1, nodes: [1, 2]),
+                                                      coverage: coverage, riderAsserted: false),
+                        "without the assertion the absence gate still rejects it")
+    }
 }

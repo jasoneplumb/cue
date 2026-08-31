@@ -209,6 +209,10 @@ final class RideSessionController: NSObject, ObservableObject {
         // order cannot decide the outcome (cue#30).
         personalMemoryStore.replaceUnsafeZones(directionsBySegment: result.directionsBySegment)
         persistPersonalMemory()
+        // Re-score: the zones just imported (or just cleared) change which
+        // segments qualify (#38). Without this the new assertions would not
+        // take effect until the next region import.
+        adopt(segments: segments)
         var notes: [String] = []
         if !result.unmatchedZoneIDs.isEmpty {
             notes.append("\(result.unmatchedZoneIDs.count) custom zone(s) had no nearby "
@@ -224,7 +228,12 @@ final class RideSessionController: NSObject, ObservableObject {
 
     private func adopt(segments imported: [RoadSegment]) {
         segments = imported
-        zones = SqueezeScorer.scoreZones(from: imported)
+        // Rider-drawn zones qualify their segments for scoring where the
+        // region's tagging cannot (#38), so scoring has to see them — and has
+        // to re-run when they change, which is why importing custom zones
+        // calls back through here.
+        zones = SqueezeScorer.scoreZones(
+            from: imported, riderAsserted: personalMemoryStore.zoneAssertedSegmentIDs)
         segmentCount = imported.count
         zoneCount = zones.count
         // Never yank an active ride OR an un-exported review to .ready —
