@@ -505,7 +505,7 @@ public enum CustomZoneImport {
                 }
             }
             var sawUngated = false
-            let applicable = observed.filter { segmentID in
+            let applicable = inPlay.filter { segmentID in
                 guard let zoneDirections = directionsBySegment[segmentID] else { return false }
                 let direction = directions[segmentID] ?? nil
                 // Only a MISSING COURSE is reported as ungated. A segment with

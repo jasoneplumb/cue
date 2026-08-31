@@ -28,7 +28,9 @@ func fail(_ message: String) -> Never {
 let usage = """
     usage: cue-custom-zone-merge <trace.json> <custom-zones.geojson> <region.json> [-o out.json] [--strict]
     WARNING: without -o, <trace.json> is overwritten in place (rides/ is gitignored — no easy undo).
-    --strict: fail instead of applying a directional zone both ways on samples the trace cannot gate.
+    --strict: fail instead of applying a directional zone both ways — whether the trace carries no
+              heading, or a matched segment has no bearing (the second is a region-geometry problem
+              that re-recording cannot fix).
     """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
