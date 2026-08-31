@@ -187,6 +187,19 @@ public final class PersonalMemoryStore {
         return _evictionCount
     }
 
+    /// Segments an imported custom zone asserts are unsafe (#38). The scorer
+    /// takes these as satisfying the meaningful-absence requirement a sparsely
+    /// tagged highway class cannot meet on its own — without it a drawn zone
+    /// is inert on exactly the roads the overlay exists for, because memory
+    /// can only promote an event the scorer already produced (RFC 0002 D5).
+    ///
+    /// Zone evidence only: an in-ride marker tap carries no claim about
+    /// riding space, so it does not qualify a segment for scoring.
+    public var zoneAssertedSegmentIDs: Set<UInt32> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(recordsBySegment.lazy.filter { $0.value.unsafeDirMask != 0 }.map(\.key))
+    }
+
     public init() {}
 
     /// Restore a previously-saved store (see `save(to:)`).

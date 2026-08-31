@@ -73,6 +73,25 @@ entirely in webmap.dev, for stretches you know are a squeeze but the OSM
 importer/scorer didn't flag (no tags to key off, or the road hasn't been
 mapped in enough detail).
 
+> **What a drawn zone can and cannot rescue** (#38). Drawing a zone lets
+> its segments satisfy the scorer's *meaningful absence* rule — the one
+> that otherwise refuses to read "no `cycleway` tag" as "no bike lane" on
+> a class nobody tags either way. Your judgment stands in for the survey
+> that is missing. It does **not** override evidence that is present (a
+> road tagged with a real bike lane stays unscored), and it does not touch
+> the class, lane-count or speed gates: a zone on a residential street, or
+> on an arterial with no `lanes` tag, still scores nothing.
+>
+> Check before you ride, rather than discovering it on the road:
+>
+> ```bash
+> swift run cue-zone-export region.json --custom-zones custom-squeeze-zones.geojson
+> ```
+>
+> It reports how many segments your zones assert and how many zones the
+> region then scores. `0 zones` means the drawn zones have nothing to
+> attach to and will stay silent whichever way you ride.
+
 1. Click the **Draw zone** map control (topleft, pencil icon).
 2. Click points on the map to trace the zone; **Finish** (button or
    Enter) commits it, **Cancel** (button or Esc) discards it.
