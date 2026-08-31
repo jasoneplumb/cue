@@ -59,8 +59,8 @@ do {
     var warnings: [String] = []
     if summary.ungatedSamples > 0 {
         warnings.append("""
-        \(summary.ungatedSamples) sample(s) carried no heading_deg_x10, so directional zone(s) \
-        were applied in BOTH directions there — this what-if overstates them by however much \
+        \(summary.ungatedSamples) sample(s) observed a directional zone without a \
+        heading_deg_x10 to gate it, so the zone(s) applied in BOTH directions there — this what-if overstates them by however much \
         the reverse passes contribute. Re-record with the debug-GPS toggle on for a gated answer.
         """)
     }
@@ -75,9 +75,14 @@ do {
         """)
     }
     if !warnings.isEmpty {
-        let detail = warnings.joined(separator: "\n")
-        if strict { fail("error: " + detail) }
-        FileHandle.standardError.write(Data(("warning: " + detail + "\n").utf8))
+        // Prefixed per warning rather than once for the join: with both
+        // firing, the second would otherwise read as continuation text of
+        // the first.
+        if strict {
+            fail(warnings.map { "error: " + $0 }.joined(separator: "\n"))
+        }
+        let detail = warnings.map { "warning: " + $0 }.joined(separator: "\n")
+        FileHandle.standardError.write(Data((detail + "\n").utf8))
     }
     try merged.write(to: outputURL, options: .atomic)
     print("""
