@@ -31,12 +31,19 @@ public struct CustomZoneFeature: Codable, Equatable, Sendable {
     /// `directional` defaults to the pre-cue#30 meaning so existing call
     /// sites — and any caller constructing a zone that carries no direction —
     /// read as bidirectional without restating it.
+    /// Truncated positions are dropped rather than rejected here — this is
+    /// the one entry point with no way to report a failure, and trapping on
+    /// caller-supplied geometry is worse than snapping the rest of the zone.
+    /// The two entry points that CAN report (parseFeatures, init(from:))
+    /// reject instead. What matters is that no path lets a truncated position
+    /// reach matchSegments, where it would silently degrade a directional
+    /// zone to .both; dropping and rejecting both satisfy that.
     public init(id: String, createdAt: String, label: String?,
                 coordinates: [[Double]], directional: Bool = false) {
         self.id = id
         self.createdAt = createdAt
         self.label = label
-        self.coordinates = coordinates
+        self.coordinates = coordinates.filter { $0.count >= 2 }
         self.directional = directional
     }
 
@@ -258,16 +265,22 @@ public enum CustomZoneImport {
                     best = (distance, edge.segmentID, bearing)
                     continue
                 }
-                // On an exact distance tie a directed edge beats a degenerate
-                // one. A duplicate OSM node sits exactly ON its neighbouring
-                // edges, so the tie is the COMMON case, not a curiosity — and
+                // Ties break on (distance, has-a-bearing, segment id). A
+                // duplicate OSM node sits exactly ON its neighbouring edges,
+                // so a tie is the COMMON case rather than a curiosity, and
                 // letting the point win would throw away a direction the road
-                // plainly has.
-                if distance < current.distanceM
-                    || (distance == current.distanceM
-                        && current.bearingDeg == nil && bearing != nil) {
-                    best = (distance, edge.segmentID, bearing)
+                // plainly has. Segment id is the final key so a tie ACROSS
+                // segments — a degenerate node at a junction — resolves the
+                // same way every run instead of following edge order (NFR-003).
+                let better: Bool
+                if distance != current.distanceM {
+                    better = distance < current.distanceM
+                } else if (bearing != nil) != (current.bearingDeg != nil) {
+                    better = bearing != nil
+                } else {
+                    better = edge.segmentID < current.segmentID
                 }
+                if better { best = (distance, edge.segmentID, bearing) }
             }
             guard let best, best.distanceM <= maxDistanceM else { return nil }
             return (best.segmentID, best.bearingDeg)
@@ -276,11 +289,16 @@ public enum CustomZoneImport {
         var matches: [String: [UInt32: ZoneDirectionMask]] = [:]
         var unmatched: [String] = []
         for feature in features {
-            let projected = feature.coordinates.map { coordinate -> (x: Double, y: Double)? in
-                // GeoJSON order: [lng, lat], optionally [lng, lat, alt] — a
-                // 3D position (altitude) is still a valid vertex to snap.
-                coordinate.count >= 2 ? project(lat: coordinate[1], lon: coordinate[0]) : nil
-            }
+            // Only a directional zone reads these, and projecting is
+            // O(vertices) per zone — skipped entirely for the common
+            // bidirectional case rather than computed and discarded.
+            let projected: [(x: Double, y: Double)?] = feature.directional
+                ? feature.coordinates.map { coordinate in
+                    // GeoJSON order: [lng, lat], optionally [lng, lat, alt] —
+                    // a 3D position (altitude) is still a valid vertex.
+                    coordinate.count >= 2 ? project(lat: coordinate[1], lon: coordinate[0]) : nil
+                }
+                : []
             var matchedIDs: [UInt32: ZoneDirectionMask] = [:]
             for (index, coordinate) in feature.coordinates.enumerated() {
                 guard coordinate.count >= 2,
@@ -321,7 +339,10 @@ public enum CustomZoneImport {
     /// fallback exists to prevent.
     private static func localBearingDeg(of projected: [(x: Double, y: Double)?],
                                         at index: Int) -> Double? {
-        guard let here = projected[index] else { return nil }
+        // Bounds-checked: `projected` is empty for a non-directional zone,
+        // and relying on the caller's short-circuit to keep us out of here
+        // would make this a trap waiting for a refactor.
+        guard index < projected.count, let here = projected[index] else { return nil }
         if index + 1 < projected.count {
             guard let next = projected[index + 1],
                   next.x != here.x || next.y != here.y else { return nil }

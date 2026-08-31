@@ -286,21 +286,26 @@ final class CustomZoneImportTests: XCTestCase {
         XCTAssertEqual(result.matches["zone-1"], [7: .forward])
     }
 
-    /// A gap in the middle of a zone must not fall back to the INCOMING edge:
-    /// on a zone that reverses right after the gap that bearing is the exact
-    /// opposite of what was meant, so the zone would fire the wrong way.
-    func testAMissingIntermediateVertexYieldsBothNotTheOppositeDirection() throws {
+    /// A truncated intermediate position can no longer REACH the direction
+    /// logic: all three entry points now stop it (parseFeatures and
+    /// init(from:) reject; the memberwise init drops). That is stronger than
+    /// the conservative fallback it used to rely on — `localBearingDeg`'s
+    /// refusal to reuse the incoming edge is now defense-in-depth for a case
+    /// no public caller can construct, not the only thing standing between a
+    /// malformed file and a zone firing the wrong way.
+    func testATruncatedIntermediatePositionCannotReachTheDirectionLogic() throws {
         let features = [CustomZoneFeature(
             id: "zone-1", createdAt: "x", label: nil,
-            // Vertex 1 is unusable; vertex 2 reverses back west.
             coordinates: [[0.0002, 0.00001], [0.0006], [0.0003, 0.00001]],
             directional: true)]
+        XCTAssertEqual(features[0].coordinates.count, 2, "the bad position is gone before matching")
         let result = CustomZoneImport.matchSegments(for: features, segments: [eastwardSegment()])
-        // `try`, not `try?`: an unmatched zone would make the assertion below
-        // pass for the wrong reason — nil is not .forward either.
+        // `try`, not `try?`: an unmatched zone would make this pass for the
+        // wrong reason — nil equals nothing either.
         let directions = try XCTUnwrap(result.matches["zone-1"]?[7])
-        XCTAssertNotEqual(directions, ZoneDirectionMask.forward,
-                          "must never invert a zone's direction from a stale incoming edge")
+        // 0.0002 -> 0.0003 is eastward, with the segment's node order: the
+        // direction of what the rider actually drew, not of a stale edge.
+        XCTAssertEqual(directions, ZoneDirectionMask.forward)
     }
 
     // MARK: - Codable contract
@@ -324,6 +329,32 @@ final class CustomZoneImportTests: XCTestCase {
             feature(id: "zone-1", coordinates: [[0, 0], [0.001, 0]], directional: 1),
         ])
         XCTAssertTrue(try CustomZoneImport.parseFeatures(from: data)[0].directional)
+    }
+
+    /// The memberwise init is the one entry point that cannot report a
+    /// failure, so it drops truncated positions rather than trapping on
+    /// caller-supplied geometry. What matters is that no path lets one reach
+    /// matchSegments, where it would silently degrade a directional zone.
+    func testMemberwiseInitDropsTruncatedPositions() {
+        let feature = CustomZoneFeature(id: "zone-1", createdAt: "x", label: nil,
+                                        coordinates: [[0, 0], [0.001], [0.002, 0]],
+                                        directional: true)
+        XCTAssertEqual(feature.coordinates, [[0, 0], [0.002, 0]])
+    }
+
+    /// A degenerate node at a junction ties across SEGMENTS, not just within
+    /// one, so segment id is the final tiebreak — otherwise the winner would
+    /// follow edge order and could differ between runs (NFR-003).
+    func testACrossSegmentTieResolvesOnSegmentIDNotEdgeOrder() {
+        let higher = segment(id: 9, from: (0, 0.0005), to: (0, 0.0005))  // degenerate
+        let lower = segment(id: 4, from: (0, 0.0005), to: (0, 0.0005))   // also degenerate
+        let features = [directionalZone(id: "zone-1",
+                                        coordinates: [[0.0005, 0], [0.0006, 0]])]
+        let forward = CustomZoneImport.matchSegments(for: features, segments: [higher, lower])
+        let reversed = CustomZoneImport.matchSegments(for: features, segments: [lower, higher])
+        XCTAssertEqual(forward.matches["zone-1"]?.keys.first, 4)
+        XCTAssertEqual(forward.matches["zone-1"], reversed.matches["zone-1"],
+                       "input order must not decide the match")
     }
 
     func testZoneDirectionMaskCodesAsABareInteger() throws {
