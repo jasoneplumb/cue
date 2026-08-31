@@ -357,6 +357,27 @@ final class CustomZoneImportTests: XCTestCase {
                        "input order must not decide the match")
     }
 
+    func testDecodingRejectsASingleVertexZoneLikeParseFeaturesDoes() {
+        // A one-vertex zone has no edge, so a directional one would reach
+        // matchSegments and resolve .both — the silent degradation both
+        // entry points exist to prevent.
+        let json = Data("""
+        {"id":"zone-1","createdAt":"x","coordinates":[[0,0]],"directional":true}
+        """.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(CustomZoneFeature.self, from: json))
+    }
+
+    /// A mask carrying only reserved bits is non-empty but contains neither
+    /// direction, so it would apply on an unknown course while refusing both
+    /// known ones — the gate inverted by a byte nobody wrote on purpose.
+    func testDecodingMasksOffReservedBits() throws {
+        let decoded = try JSONDecoder().decode(ZoneDirectionMask.self, from: Data("4".utf8))
+        XCTAssertTrue(decoded.isEmpty)
+        XCTAssertFalse(decoded.applies(to: nil))
+        XCTAssertEqual(try JSONDecoder().decode(ZoneDirectionMask.self, from: Data("7".utf8)),
+                       .both, "real direction bits survive the mask")
+    }
+
     func testZoneDirectionMaskCodesAsABareInteger() throws {
         let encoded = try JSONEncoder().encode(ZoneDirectionMask.backward)
         XCTAssertEqual(String(decoding: encoded, as: UTF8.self), "2")

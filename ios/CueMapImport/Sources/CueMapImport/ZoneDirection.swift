@@ -78,7 +78,13 @@ public struct ZoneDirectionMask: OptionSet, Codable, Hashable, Sendable {
     /// into every persisted file and wire format that ever carries a mask,
     /// and silently fail to decode a plain number written by anything else.
     public init(from decoder: any Decoder) throws {
+        // Reserved bits are masked off rather than trusted. A value carrying
+        // only them is non-empty but contains neither direction, so it would
+        // apply on an unknown course (which tests isEmpty) while refusing
+        // both known ones — the gate inverted by a byte nobody wrote on
+        // purpose.
         rawValue = try decoder.singleValueContainer().decode(UInt8.self)
+            & ZoneDirectionMask.both.rawValue
     }
 
     public func encode(to encoder: any Encoder) throws {

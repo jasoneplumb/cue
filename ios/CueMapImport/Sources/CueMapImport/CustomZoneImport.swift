@@ -64,6 +64,15 @@ public struct CustomZoneFeature: Codable, Equatable, Sendable {
         createdAt = try container.decode(String.self, forKey: .createdAt)
         label = try container.decodeIfPresent(String.self, forKey: .label)
         let decoded = try container.decode([[Double]].self, forKey: .coordinates)
+        // The same >= 2 POSITIONS check parseFeatures makes, not just the
+        // per-position one below: a single-vertex zone has no edge, so a
+        // directional one would reach matchSegments and resolve .both — the
+        // silent degradation this validation exists to prevent.
+        guard decoded.count >= 2 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .coordinates, in: container,
+                debugDescription: "LineString needs at least 2 positions")
+        }
         // The same position check parseFeatures makes. Both entry points must
         // enforce it or the weaker one becomes a way in: matchSegments can
         // only SKIP a truncated position, so a directional zone would quietly
