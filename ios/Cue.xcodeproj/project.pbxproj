@@ -363,7 +363,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = "0.13.0-alpha";
+				MARKETING_VERSION = "0.14.0-alpha";
 				PRODUCT_BUNDLE_IDENTIFIER = com.jasoneplumb.cue;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -392,7 +392,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = "0.13.0-alpha";
+				MARKETING_VERSION = "0.14.0-alpha";
 				PRODUCT_BUNDLE_IDENTIFIER = com.jasoneplumb.cue;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -419,7 +419,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = "0.13.0-alpha";
+				MARKETING_VERSION = "0.14.0-alpha";
 				PRODUCT_BUNDLE_IDENTIFIER = com.jasoneplumb.cue.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -447,7 +447,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = "0.13.0-alpha";
+				MARKETING_VERSION = "0.14.0-alpha";
 				PRODUCT_BUNDLE_IDENTIFIER = com.jasoneplumb.cue.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;

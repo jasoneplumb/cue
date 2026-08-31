@@ -2,6 +2,88 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.14.0-alpha — 2026-08-31
+
+A rider can now say "this squeeze only matters going this way." Custom
+zones drawn in webmap.dev carry the direction they were drawn in, and a
+directional zone biases cueing only on the pass that matches it — the case
+hand-drawn zones exist for, and the only way two zones on the same road
+can be told apart. The kernel is untouched: RFC 0002 D5 already put the
+spatial join phone-side, so the gate sits upstream of what
+`personal_memory[]` records and a recorded ride still replays bit-exactly
+through an unmodified `cue_policy.c`. No schema bump either.
+
+Alongside it, four fixes on the Pico BLE and actuator path, and a
+review-workflow change prompted by measuring this release's own cost.
+
+### Added
+
+- **Directional custom zones** (#30, RFC 0008): the custom-zone GeoJSON
+  contract gains one optional `directional` boolean — absent or false
+  means bidirectional, so every file exported before it existed keeps its
+  exact meaning. Direction lives in the LineString's vertex order alone; a
+  second bearing field could disagree with the geometry it duplicates.
+  Each `(zone, segment)` match resolves to two bits along that segment's
+  own node order, so the ride-time comparison is exact rather than a fuzzy
+  bearing match, and it fits on a personal-memory record without
+  disturbing RFC 0002 D7's 5 KiB budget (17 B → 18 B packed, still
+  rounding to 20 B).
+  - Alignment is the same side of perpendicular (90°), reusing
+    `RouteEventTracker.approachGateDeg`'s directed convention rather than
+    inventing a third threshold. Deliberately wide: anything tighter drops
+    legitimate cues where a road bends or on approach, and too wide a gate
+    degrades only to the previous fire-both-ways behavior.
+  - Direction latches per approach but only once **corroborated** —
+    `directionLatchSamples` consecutive agreeing samples, the discipline
+    `SegmentMatcher.hysteresisSamples` already applies. Latching on the
+    first fix let one transient course reading gate a zone out for an
+    entire approach, a suppressed cue and strictly worse than what it
+    replaced.
+  - Zone evidence and in-ride tap evidence are now **separate record
+    fields**. A tap is about the place and applies whichever way the rider
+    is going; a zone is about a direction through it. Keeping them apart
+    is what lets an import be cleared without touching a rider's own
+    markers — so importing a file now replaces the zone set, and deleting
+    a zone from the file actually clears it.
+  - `cue-custom-zone-merge` gates on the same bearing and the same latch,
+    so a desk what-if predicts what the phone did. `heading_deg_x10` is
+    optional (NFR-005), so a trace without it applies directional zones
+    both ways and says so; `--strict` refuses instead, failing before it
+    writes. A bearingless segment is reported separately from a missing
+    course, because re-recording fixes one and cannot fix the other.
+- **DIAG reports an undelivered DECISION** (#7): the MCU surfaces a
+  decision the link never delivered, so a dropped report is visible rather
+  than silently absent.
+
+### Fixed
+
+- **Actuator state races the BTstack async_context IRQ** (#23): actuator
+  state is now synchronized against the IRQ that can preempt it.
+- **ATT long-write assembly state survived a disconnect** (#22): reset on
+  disconnect, so a reconnecting client cannot inherit a half-assembled
+  write.
+- **SESSION_STOP status code and led_probe cancel asymmetry** (#24).
+- **Desk tools refused schema_version 2** (#6): `cue-review-merge` and
+  `cue-events-export` now accept v2 traces, which the personal-memory
+  feature has been emitting since 0.12.0-alpha.
+
+### Changed
+
+- **RFC 0007 — miniaturized cue device** (#28): ESP32-H2, LiPo, and the
+  loudness question, recorded as a decision record.
+- **Review workflow reads only the delta on follow-up rounds** (#36):
+  measured on #30's stack, the five test and build jobs finish in ~2
+  minutes wall clock in parallel while the review job ran 11 minutes to
+  76 minutes — review is effectively the entire PR wait, and every round
+  re-read the whole PR even when the change since the last verdict was one
+  comment. The verdict comment now carries a `reviewed-sha` marker and
+  later rounds scope to the diff since it; `--max-turns` drops 25 → 10.
+  The six review dimensions are unchanged — late rounds on #30 were still
+  finding real defects, so this targets latency, not rigor.
+- GitHub Actions pinned to full commit SHAs; CI, release, license and C99
+  badges added to the README; `library.json` chip keywords and community
+  scaffolding synced from the working archive.
+
 ## 0.13.0-alpha — 2026-08-13
 
 The repositioning release: not one kernel decision changes, and that is
