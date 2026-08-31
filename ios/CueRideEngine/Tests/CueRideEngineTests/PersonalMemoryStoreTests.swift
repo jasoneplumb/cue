@@ -222,6 +222,27 @@ final class PersonalMemoryStoreTests: XCTestCase {
         XCTAssertEqual(store.resolved(for: 7)?.noticeBonusS, 4)
     }
 
+    /// A corrupt file carrying reserved bits must not invert the gate:
+    /// non-empty (so it fires on unknown course) yet holding neither
+    /// direction (so it refuses both known ones).
+    func testLoadingMasksOffReservedDirectionBits() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let corrupt = Data("""
+        [{"segmentID":7,"useful":0,"falseAlarm":0,"tooLate":0,"markerCount":0,\
+        "noticeBonusS":0,"unsafeDirMask":4,"lruTouch":1}]
+        """.utf8)
+        try corrupt.write(to: directory.appendingPathComponent("personal-memory.json"))
+
+        let store = PersonalMemoryStore.load(from: directory)
+        // Unmasked this resolved .unsafe: the mask was non-empty, so
+        // applies(to: nil) said yes while both known directions said no.
+        XCTAssertEqual(store.resolved(for: 7, travelling: nil)?.state, .neutral)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .neutral)
+    }
+
     func testDirectionsSurviveASaveLoadRoundTrip() throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString)

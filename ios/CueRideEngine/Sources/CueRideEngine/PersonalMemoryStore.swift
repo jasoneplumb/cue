@@ -117,7 +117,14 @@ public struct PersonalMemoryRecord: Codable, Equatable, Sendable {
         tooLate = try container.decode(UInt16.self, forKey: .tooLate)
         markerCount = try container.decode(UInt16.self, forKey: .markerCount)
         noticeBonusS = try container.decode(UInt8.self, forKey: .noticeBonusS)
-        unsafeDirMask = try container.decodeIfPresent(UInt8.self, forKey: .unsafeDirMask) ?? 0
+        // Masked like ZoneDirectionMask's own decoder, and for the same
+        // reason: a byte carrying only reserved bits is non-empty but holds
+        // neither direction, so it would fire on an unknown course (which
+        // tests isEmpty) while refusing both known ones. Guarding one decoder
+        // and not its sibling just moves the hazard to whichever file a
+        // corrupt record happens to arrive through.
+        unsafeDirMask = (try container.decodeIfPresent(UInt8.self, forKey: .unsafeDirMask) ?? 0)
+            & ZoneDirectionMask.both.rawValue
         lruTouch = try container.decode(UInt32.self, forKey: .lruTouch)
     }
 }
