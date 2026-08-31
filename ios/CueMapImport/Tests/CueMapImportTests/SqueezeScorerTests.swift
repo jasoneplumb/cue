@@ -213,4 +213,34 @@ final class SqueezeScorerTests: XCTestCase {
         XCTAssertEqual(SqueezeScorer.scoreZones(from: segments),
                        SqueezeScorer.scoreZones(from: segments, riderAsserted: []))
     }
+
+    // MARK: - rejectionReason diagnostics (#38)
+
+    func testRejectionReasonNamesEachGateItFailed() {
+        let coverage = ["secondary": 0.0]
+        func why(_ seg: RoadSegment, asserted: Bool = true) -> String {
+            SqueezeScorer.rejectionReason(seg, coverage: coverage, riderAsserted: asserted) ?? ""
+        }
+        XCTAssertTrue(why(segment(id: 1, nodes: [1, 2], highway: "residential"))
+            .contains("not an arterial"))
+        XCTAssertTrue(why(segment(id: 2, nodes: [1, 2], lanes: 3)).contains("lanes=3"))
+        XCTAssertTrue(why(segment(id: 3, nodes: [1, 2], lanes: nil)).contains("no lanes tag"))
+        XCTAssertTrue(why(segment(id: 4, nodes: [1, 2], mph: 25)).contains("below the 40 mph"))
+        XCTAssertTrue(why(segment(id: 5, nodes: [1, 2], mph: nil)).contains("no maxspeed"))
+        XCTAssertTrue(why(segment(id: 6, nodes: [1, 2],
+                                  ridingSpace: ["cycleway": "lane"])).contains("dedicated"))
+    }
+
+    /// The reported case: a zone drawn where a 2-lane and a 3-lane stretch
+    /// meet snaps to both. The 3-lane one is correctly inert, and saying so
+    /// is the difference between "my zone is broken" and "that half of it is
+    /// a road the scorer deliberately excludes".
+    func testAQualifyingSegmentHasNoRejectionReason() {
+        let coverage = ["secondary": 0.0]
+        XCTAssertNil(SqueezeScorer.rejectionReason(segment(id: 1, nodes: [1, 2]),
+                                                   coverage: coverage, riderAsserted: true))
+        XCTAssertNotNil(SqueezeScorer.rejectionReason(segment(id: 1, nodes: [1, 2]),
+                                                      coverage: coverage, riderAsserted: false),
+                        "without the assertion the absence gate still rejects it")
+    }
 }

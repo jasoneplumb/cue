@@ -56,6 +56,21 @@ do {
         riderAsserted = Set(match.directionsBySegment.keys)
         print("custom zones: \(features.count) drawn -> \(riderAsserted.count) segment(s) "
             + "asserted, \(match.unmatchedZoneIDs.count) zone(s) matched no segment")
+        // Per zone, say whether it will actually do anything and why not.
+        // "My zone does nothing" has several causes with different remedies,
+        // and the summary counts alone cannot tell them apart (#38).
+        let coverage = SqueezeScorer.ridingSpaceTagCoverage(byClass: segments)
+        let byID = Dictionary(segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for zoneID in match.matches.keys.sorted() {
+            for segmentID in (match.matches[zoneID] ?? [:]).keys.sorted() {
+                guard let segment = byID[segmentID] else { continue }
+                let why = SqueezeScorer.rejectionReason(segment, coverage: coverage,
+                                                        riderAsserted: true)
+                let road = segment.attributes.name ?? "(unnamed)"
+                print("  zone \(zoneID.prefix(8)) -> segment \(segmentID) (\(road)): "
+                    + (why.map { "INERT — \($0)" } ?? "scores"))
+            }
+        }
     }
     let zones = SqueezeScorer.scoreZones(from: segments, riderAsserted: riderAsserted)
     let geojson = try ZoneGeoJSON.encode(zones: zones, segments: segments)
