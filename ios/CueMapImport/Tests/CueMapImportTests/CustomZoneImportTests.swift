@@ -575,6 +575,21 @@ final class CustomZoneImportTests: XCTestCase {
                        "the spiked first sample gates out; it must not latch backward")
     }
 
+    /// The two causes must be disjoint: a segment that is BOTH bearingless
+    /// and on a headingless sample used to land in both counters, so the CLI
+    /// printed "re-record with debug-GPS" beside "re-recording cannot change
+    /// this" about the same segment.
+    func testABearinglessSegmentIsNotAlsoCountedAsAMissingCourse() {
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: bidirectionalSamples([0, 1000]),  // no heading either
+            observedSegmentIDs: [0: [7], 1000: [7]],
+            segmentBearingDeg: [:])                    // and no bearing
+        XCTAssertEqual(resolved.undirectedSegments, 1)
+        XCTAssertEqual(resolved.ungatedSamples, 0,
+                       "re-recording cannot help here, so it must not be advised")
+    }
+
     func testABidirectionalZoneIsNeverCountedAsUngated() {
         let resolved = CustomZoneImport.personalMemoryChangePoints(
             directionsBySegment: [7: .both],

@@ -517,7 +517,17 @@ public enum CustomZoneImport {
                 // no bearing also yields nil, but it is a different problem
                 // with a different remedy, and telling the operator to
                 // re-record would be advice that cannot work.
-                if sample.headingDeg == nil, zoneDirections != .both { sawUngated = true }
+                // A segment with no bearing is excluded here, not just
+                // counted elsewhere: without this guard a segment that is
+                // BOTH bearingless and on a headingless sample lands in both
+                // counters, and the tool prints "re-record with debug-GPS"
+                // next to "re-recording cannot change this" about the same
+                // segment. The two causes have to be disjoint for either
+                // piece of advice to be worth reading.
+                if sample.headingDeg == nil, zoneDirections != .both,
+                   segmentBearingDeg[segmentID] != nil {
+                    sawUngated = true
+                }
                 return zoneDirections.applies(to: direction)
             }.min()
             if sawUngated { ungatedSamples += 1 }
