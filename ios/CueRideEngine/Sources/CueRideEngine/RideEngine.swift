@@ -215,7 +215,7 @@ public final class RideEngine {
         // resolves its own direction. A segment dropped by the maxEventsPerStep
         // cap re-latches when it next produces an event — the cap is a wire
         // constraint, and re-resolving is the same work the first approach did.
-        let inPlay = Set(events.map(\.segment_id))
+        let inPlay = segmentsInPlay(events)
         latchedDirection = latchedDirection.filter { inPlay.contains($0.key) }
         directionCandidate = directionCandidate.filter { inPlay.contains($0.key) }
         let kernelMemory = resolvedMemory.map {
@@ -322,8 +322,12 @@ public final class RideEngine {
         // the same segment in one step (overlapping zones), and resolving per
         // event would advance the corroboration counter twice on one fix —
         // latching in a single step and defeating the guard entirely.
-        var directions: [UInt32: TravelDirection?] = [:]
-        for segmentID in Set(events.map(\.segment_id)) {
+        // Non-optional value type, matching the offline twin: assigning nil
+        // to a Dictionary subscript REMOVES the key, so the optional form
+        // promised something the type cannot do. An absent key already means
+        // "no direction".
+        var directions: [UInt32: TravelDirection] = [:]
+        for segmentID in segmentsInPlay(events) {
             directions[segmentID] = travelDirection(on: segmentID, headingDeg: headingDeg)
         }
         var best: (event: RouteEvent, resolved: ResolvedPersonalMemory)?
@@ -332,7 +336,7 @@ public final class RideEngine {
             // dictionary lookup of an Optional value produces, but `?? nil`
             // reads like a guard against a missing key and invites someone to
             // "simplify" it into a force-unwrap.
-            let direction = directions[event.segment_id].flatMap { $0 }
+            let direction = directions[event.segment_id]
             guard let resolved = personalMemoryStore.resolved(for: event.segment_id,
                                                               travelling: direction)
             else { continue }
@@ -352,6 +356,14 @@ public final class RideEngine {
         return best?.resolved
     }
 
+    /// The distinct segments this step's events name. One definition, used
+    /// both to resolve directions and to prune the latch: two independently
+    /// built sets over the same events could disagree about what is in play
+    /// if either side's input were ever transformed first.
+    private func segmentsInPlay(_ events: [RouteEvent]) -> Set<UInt32> {
+        Set(events.map(\.segment_id))
+    }
+
     /// Which way the rider is travelling `segmentID`: this sample's own
     /// resolution until `directionLatchSamples` consecutive samples agree,
     /// the latched one after that. nil — which the store reads as "cannot
@@ -366,6 +378,22 @@ public final class RideEngine {
     /// course now versus a segment not yet reached — bounded by the 90° gate,
     /// by corroboration, and by the fact that an unresolved direction applies
     /// the record rather than withholding it.
+    /// NOT a pure query despite reading like one: it advances the
+    /// corroboration counter and can latch. Correctness therefore depends on
+    /// `resolveMemory` calling it exactly ONCE per distinct segment per step
+    /// — a second call on one fix corroborates that fix against itself and
+    /// latches immediately, the bug
+    /// `testTwoEventsOnOneSegmentDoNotLatchInASingleStep` exists to catch.
+    /// `segmentsInPlay` enforces the once-per-segment rule; a new caller has
+    /// to preserve it.
+    ///
+    /// Two known limits, both bounded by the latch clearing when a segment
+    /// leaves play, and neither fixable by corroboration. A zone imported
+    /// MID-APPROACH does not invalidate a latch already held, so the rest of
+    /// that one approach uses the pre-import direction. And a segment that
+    /// produces exactly ONE event ever cannot be corroborated at all — that
+    /// sample's own reading decides it, because no second sample exists to
+    /// agree or disagree.
     private func travelDirection(on segmentID: UInt32,
                                  headingDeg: Double?) -> TravelDirection? {
         if let latched = latchedDirection[segmentID] { return latched }
