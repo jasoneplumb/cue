@@ -109,6 +109,15 @@ public struct PersonalMemoryRecord: Codable, Equatable, Sendable {
     /// Empty is also the RIGHT default, not just a safe one: a pre-cue#30
     /// record's `markerCount` already covers whatever zone import or tap
     /// raised it, and that resolves omnidirectionally exactly as it did.
+    ///
+    /// EVERY FIELD ADDED HERE AFTER THIS POINT MUST USE `decodeIfPresent`
+    /// WITH A DEFAULT, for the same reason. This decoder is hand-written
+    /// precisely so that adding a field cannot break older files — a plain
+    /// `decode` would restore the exact hazard it exists to prevent, and the
+    /// failure is invisible: `load` swallows the error and hands back an
+    /// empty store, so a rider's whole history disappears with no warning
+    /// anywhere. `testLoadsAPreDirectionFileWithoutLosingHistory` guards
+    /// today's fields; extend it alongside any new one.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         segmentID = try container.decode(UInt32.self, forKey: .segmentID)
