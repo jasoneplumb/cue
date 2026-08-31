@@ -131,7 +131,13 @@ extension RoadSegment {
     /// constants as SegmentImporter.edgeLengthM — exact enough for a bearing
     /// at segment scale.
     public var nodeOrderBearingDeg: Double? {
-        guard let firstLatE7 = latE7.first, let firstLonE7 = lonE7.first,
+        // Equal lengths are an importer invariant, but the two arrays are
+        // subscripted independently here: if they ever diverge, .last would
+        // index different nodes and the bearing would be measured to a point
+        // that does not exist — silently firing a directional zone the wrong
+        // way, which is the one failure this whole path exists to avoid.
+        guard latE7.count == lonE7.count,
+              let firstLatE7 = latE7.first, let firstLonE7 = lonE7.first,
               let lastLatE7 = latE7.last, let lastLonE7 = lonE7.last else { return nil }
         let anchorLat = Double(firstLatE7) / 1e7
         let northM = (Double(lastLatE7) - Double(firstLatE7)) / 1e7 * 110_540.0

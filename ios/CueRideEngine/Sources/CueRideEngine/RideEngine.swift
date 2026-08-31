@@ -328,7 +328,11 @@ public final class RideEngine {
         }
         var best: (event: RouteEvent, resolved: ResolvedPersonalMemory)?
         for event in events {
-            let direction = directions[event.segment_id] ?? nil
+            // flatMap, not `?? nil`: both collapse the double Optional a
+            // dictionary lookup of an Optional value produces, but `?? nil`
+            // reads like a guard against a missing key and invites someone to
+            // "simplify" it into a force-unwrap.
+            let direction = directions[event.segment_id].flatMap { $0 }
             guard let resolved = personalMemoryStore.resolved(for: event.segment_id,
                                                               travelling: direction)
             else { continue }

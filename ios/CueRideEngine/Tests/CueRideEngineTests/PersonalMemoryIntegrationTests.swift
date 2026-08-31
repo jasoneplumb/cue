@@ -341,15 +341,29 @@ final class PersonalMemoryIntegrationTests: XCTestCase {
                        "one bad fix must cost one sample, not the whole approach")
     }
 
-    /// Two zones can snap to one segment, so a step can carry two events
-    /// naming it. Resolving direction per EVENT advanced the corroboration
-    /// counter twice on a single fix, latching in one step and defeating the
-    /// guard — so a first-fix spike would suppress the approach after all.
-    func testOverlappingEventsOnOneSegmentDoNotLatchInASingleStep() throws {
-        let (segments, zones) = try fixtureSegmentsAndZones()
+    /// Two events in one step can name the same segment, and resolving
+    /// direction per EVENT advanced the corroboration counter twice on a
+    /// single fix — latching in one step and defeating the guard, so a
+    /// first-fix spike would suppress the approach after all.
+    ///
+    /// SqueezeScorer partitions segments, so its zones never share one; the
+    /// zones are therefore built BY HAND here and handed straight to
+    /// RideEngine, which takes them as a parameter. Driving this through the
+    /// scorer's own output would not exercise the dedup at all — the version
+    /// of this test that did was passing whether the dedup existed or not.
+    func testTwoEventsOnOneSegmentDoNotLatchInASingleStep() throws {
+        let (segments, scored) = try fixtureSegmentsAndZones()
+        let shared = scored[0]
+        let overlapping = [
+            shared,
+            SqueezeZone(eventID: shared.eventID &+ 1, segmentIDs: shared.segmentIDs,
+                        severity: shared.severity, confidence: shared.confidence,
+                        reasonsBitmask: shared.reasonsBitmask, lengthM: shared.lengthM),
+        ]
         let store = PersonalMemoryStore()
-        store.recordUnsafeZone(segmentID: zones[0].segmentIDs[0], directions: .forward)
-        let engine = RideEngine(segments: segments, zones: zones, personalMemoryStore: store,
+        store.recordUnsafeZone(segmentID: shared.segmentIDs[0], directions: .forward)
+        let engine = RideEngine(segments: segments, zones: overlapping,
+                                personalMemoryStore: store,
                                 rideID: "directional-overlapping-events",
                                 startedAt: "2026-07-22T00:00:00Z")
         for second in 0..<120 {
@@ -358,6 +372,9 @@ final class PersonalMemoryIntegrationTests: XCTestCase {
                 lat: 0.00002,
                 lon: -0.004 + 6.0 * Double(second) / 111_320.0,
                 speedMps: 6.0,
+                // Two events name this segment every step, so without the
+                // per-segment dedup this one spiked fix corroborates itself
+                // and latches .backward for the whole approach.
                 headingDeg: second == 0 ? 269 : 90))
         }
         XCTAssertEqual(try activeMemoryStates(in: engine), ["UNSAFE"],

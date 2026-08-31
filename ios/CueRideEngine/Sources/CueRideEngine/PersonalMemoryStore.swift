@@ -332,9 +332,13 @@ public final class PersonalMemoryStore {
     /// in the mask so that re-importing is idempotent, and so that undoing a
     /// tap can never disturb a zone's assertion (or vice versa).
     ///
-    /// Prefer `replaceUnsafeZones` for an import — this writes ONE segment and
-    /// cannot know about a zone the rider deleted.
-    public func recordUnsafeZone(segmentID: UInt32, directions: ZoneDirectionMask) {
+    /// INTERNAL on purpose. It assigns rather than merges, so a caller
+    /// looping over zones instead of passing the pre-unioned result would
+    /// silently keep only the last zone's direction for any segment two zones
+    /// cover — and the name gives no hint of that. `replaceUnsafeZones` is
+    /// the whole-file operation every real import wants, and is the only one
+    /// this type exposes; this stays for tests that need a single segment.
+    func recordUnsafeZone(segmentID: UInt32, directions: ZoneDirectionMask) {
         guard segmentID != 0, !directions.isEmpty else { return }
         lock.lock(); defer { lock.unlock() }
         var record = touch(segmentID)
@@ -358,9 +362,17 @@ public final class PersonalMemoryStore {
     /// touching anything the rider did during a ride.
     public func replaceUnsafeZones(directionsBySegment: [UInt32: ZoneDirectionMask]) {
         lock.lock(); defer { lock.unlock() }
-        for (segmentID, record) in recordsBySegment where record.unsafeDirMask != 0 {
-            guard directionsBySegment[segmentID] == nil else { continue }
-            var cleared = record
+        // Keys collected FIRST: storePruningIfEmpty writes to
+        // recordsBySegment, and mutating a collection while iterating it is
+        // undefined per Swift's own documentation. Copy-on-write happens to
+        // make it safe today, but that is an implementation detail of
+        // Dictionary.makeIterator(), not a guarantee to build on.
+        let departed = recordsBySegment.compactMap { segmentID, record in
+            record.unsafeDirMask != 0 && directionsBySegment[segmentID] == nil
+                ? segmentID : nil
+        }
+        for segmentID in departed {
+            guard var cleared = recordsBySegment[segmentID] else { continue }
             cleared.unsafeDirMask = 0
             storePruningIfEmpty(cleared, for: segmentID)
         }
