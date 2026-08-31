@@ -2,6 +2,7 @@
 //         the derivation precedence (markers dominate), saturating counters,
 //         the too_late notice-bonus cap, LRU eviction at the 256-segment
 //         cap, and a save/load round trip.
+import CueMapImport
 import XCTest
 @testable import CueRideEngine
 
@@ -48,6 +49,211 @@ final class PersonalMemoryStoreTests: XCTestCase {
                                           tooLate: 5, markerCount: 0, noticeBonusS: 8, lruTouch: 0)
         XCTAssertEqual(PersonalMemoryStore.resolve(record).state, .neutral)
         XCTAssertEqual(PersonalMemoryStore.resolve(record).noticeBonusS, 8)
+    }
+
+    // MARK: - Direction gate (cue#30)
+
+    /// An imported zone asserts a direction and contributes NO markerCount —
+    /// a tap is the thing that counts there, and it applies omnidirectionally.
+    private func directionalRecord(_ directions: ZoneDirectionMask,
+                                   falseAlarm: UInt16 = 0, useful: UInt16 = 0)
+        -> PersonalMemoryRecord {
+        PersonalMemoryRecord(segmentID: 1, useful: useful, falseAlarm: falseAlarm,
+                             tooLate: 0, markerCount: 0, noticeBonusS: 0,
+                             unsafeDirMask: directions.rawValue, lruTouch: 0)
+    }
+
+    func testAnInRideTapAppliesWhicheverWayTheRiderIsGoing() {
+        // A tap is about the place, not a direction through it.
+        let record = PersonalMemoryRecord(segmentID: 1, useful: 0, falseAlarm: 0, tooLate: 0,
+                                          markerCount: 1, noticeBonusS: 0, lruTouch: 0)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .forward).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .backward).state, .unsafe)
+    }
+
+    func testDirectionalMarkerAppliesOnlyTravellingThatWay() {
+        let record = directionalRecord(.forward)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .forward).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .backward).state, .neutral)
+    }
+
+    func testOmnidirectionalMarkerAppliesBothWays() {
+        let record = directionalRecord(.both)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .forward).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .backward).state, .unsafe)
+    }
+
+    /// The reviewer's sequence on #32: import a directional zone, tap the
+    /// same segment mid-ride, then discard that ride. The tap's undo must not
+    /// leave the zone applying BOTH ways — which is exactly what a single
+    /// shared mask did, because nothing could attribute the widening back to
+    /// the tap that caused it.
+    func testDiscardingARideLeavesAnImportedZonesDirectionIntact() {
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .forward)
+        store.recordUnsafeMarker(segmentID: 7)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe,
+                       "while the tap stands, the segment is unsafe both ways")
+
+        store.undoUnsafeMarker(segmentID: 7)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .neutral,
+                       "the discarded ride's tap must not outlive itself as a widened zone")
+    }
+
+    func testARecordHoldingOnlyAZoneIsNotPrunedAway() {
+        // markerCount is 0 for a zone-only segment, so the prune test has to
+        // count the mask as evidence or an import would vanish on any undo.
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .forward)
+        store.undoUnsafeMarker(segmentID: 7)
+        XCTAssertEqual(store.recordCount, 1)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .unsafe)
+    }
+
+    func testUnknownCourseCannotRejectADirectionalMarker() {
+        // Standstill, or CoreLocation reporting no course — the gate cannot
+        // reject anything, so behavior matches a caller with no direction.
+        XCTAssertEqual(PersonalMemoryStore.resolve(directionalRecord(.forward),
+                                                   travelling: nil).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(directionalRecord(.forward)).state, .unsafe)
+    }
+
+    /// With the marker silent for this direction, the segment's review
+    /// history is the only evidence left and it should govern — the rider
+    /// flagged one way unsafe and graded the other way's cues false alarms.
+    func testMarkerSilentForThisDirectionFallsThroughToSuppress() {
+        let record = directionalRecord(.forward, falseAlarm: 2, useful: 0)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .forward).state, .unsafe)
+        XCTAssertEqual(PersonalMemoryStore.resolve(record, travelling: .backward).state, .suppress)
+    }
+
+    // MARK: - Zone import write path (cue#30)
+
+    func testRecordUnsafeZoneAssignsRatherThanUnionsDirections() {
+        // Re-importing a file after flipping a zone's direction must leave
+        // the segment flagged the NEW way only — a union would flag both
+        // forever, with no way for the rider to take it back.
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .forward)
+        store.recordUnsafeZone(segmentID: 7, directions: .backward)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .neutral)
+    }
+
+    func testAnInRideMarkerAppliesBothWaysOverAZonesNarrowerAssertion() {
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .forward)
+        store.recordUnsafeMarker(segmentID: 7)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe)
+    }
+
+    /// Import REPLACES in webmap.dev, so it has to here too: a segment the
+    /// rider deleted a zone from must stop being flagged. Writing only the
+    /// segments a new file covers would leave the old one flagged forever,
+    /// with no way to take it back.
+    func testReplacingZonesClearsSegmentsTheNewFileDoesNotCover() {
+        let store = PersonalMemoryStore()
+        store.replaceUnsafeZones(directionsBySegment: [7: .forward, 8: .backward])
+        XCTAssertEqual(store.recordCount, 2)
+
+        store.replaceUnsafeZones(directionsBySegment: [8: .forward])
+        XCTAssertNil(store.resolved(for: 7, travelling: .forward),
+                     "segment 7's zone was deleted from the file — it must go")
+        XCTAssertEqual(store.resolved(for: 8, travelling: .forward)?.state, .unsafe,
+                       "and segment 8 takes its new direction")
+        XCTAssertEqual(store.recordCount, 1)
+    }
+
+    /// Clearing a departed zone must not take a rider's own history with it.
+    func testReplacingZonesKeepsTapAndReviewEvidenceOnACearedSegment() {
+        let store = PersonalMemoryStore()
+        store.replaceUnsafeZones(directionsBySegment: [7: .forward])
+        store.recordUnsafeMarker(segmentID: 7)
+
+        store.replaceUnsafeZones(directionsBySegment: [:])
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe,
+                       "the tap stands on its own, both ways")
+    }
+
+    func testReplacingWithAnExplicitlyEmptyMaskClearsTheSegment() {
+        // A present-but-empty entry has to count as departed: the assign path
+        // skips an empty mask, so treating it as an update would leave the old
+        // direction standing with no way to clear it.
+        let store = PersonalMemoryStore()
+        store.replaceUnsafeZones(directionsBySegment: [7: .forward])
+        store.replaceUnsafeZones(directionsBySegment: [7: []])
+        XCTAssertNil(store.resolved(for: 7, travelling: .forward))
+        XCTAssertEqual(store.recordCount, 0)
+    }
+
+    func testAnEmptyDirectionMaskIsNotRecordedAtAll() {
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: [])
+        XCTAssertEqual(store.recordCount, 0)
+    }
+
+    // MARK: - Persistence migration (cue#30)
+
+    /// The highest-severity hazard in adding a field to this record: `load`
+    /// answers a decode failure with an EMPTY store, so a required new key
+    /// would silently discard a rider's entire history on first launch after
+    /// the upgrade. A pre-cue#30 file must load with every counter intact and
+    /// its segments omnidirectional.
+    func testLoadsAPreDirectionFileWithoutLosingHistory() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacy = Data("""
+        [{"segmentID":7,"useful":1,"falseAlarm":0,"tooLate":2,"markerCount":1,\
+        "noticeBonusS":4,"lruTouch":9}]
+        """.utf8)
+        try legacy.write(to: directory.appendingPathComponent("personal-memory.json"))
+
+        let store = PersonalMemoryStore.load(from: directory)
+        XCTAssertEqual(store.recordCount, 1, "a decode failure would have yielded an empty store")
+        // markerCount covers whatever raised it before cue#30, and that still
+        // resolves omnidirectionally — the absent mask means "no zone", not
+        // "no evidence".
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .backward)?.state, .unsafe)
+        XCTAssertEqual(store.resolved(for: 7)?.noticeBonusS, 4)
+    }
+
+    /// A corrupt file carrying reserved bits must not invert the gate:
+    /// non-empty (so it fires on unknown course) yet holding neither
+    /// direction (so it refuses both known ones).
+    func testLoadingMasksOffReservedDirectionBits() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let corrupt = Data("""
+        [{"segmentID":7,"useful":0,"falseAlarm":0,"tooLate":0,"markerCount":0,\
+        "noticeBonusS":0,"unsafeDirMask":4,"lruTouch":1}]
+        """.utf8)
+        try corrupt.write(to: directory.appendingPathComponent("personal-memory.json"))
+
+        let store = PersonalMemoryStore.load(from: directory)
+        // Unmasked this resolved .unsafe: the mask was non-empty, so
+        // applies(to: nil) said yes while both known directions said no.
+        XCTAssertEqual(store.resolved(for: 7, travelling: nil)?.state, .neutral)
+        XCTAssertEqual(store.resolved(for: 7, travelling: .forward)?.state, .neutral)
+    }
+
+    func testDirectionsSurviveASaveLoadRoundTrip() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .backward)
+        try store.save(to: directory)
+
+        let loaded = PersonalMemoryStore.load(from: directory)
+        XCTAssertEqual(loaded.resolved(for: 7, travelling: .backward)?.state, .unsafe)
+        XCTAssertEqual(loaded.resolved(for: 7, travelling: .forward)?.state, .neutral)
     }
 
     // MARK: - Store mutation: saturating counters, D4 bonus cap

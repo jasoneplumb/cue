@@ -219,6 +219,195 @@ final class PersonalMemoryIntegrationTests: XCTestCase {
                       "the clear record must carry the segment it clears, never the reserved 0 sentinel")
     }
 
+    // MARK: - Directional custom zones (cue#30)
+
+    /// The mirror image of `ride`: same road, travelled the other way, so the
+    /// only thing that differs between the two assertions below is direction.
+    private func rideWestbound(_ engine: RideEngine) {
+        for second in 0..<120 {
+            engine.process(RideFix(
+                tMs: UInt32(second * 1000),
+                lat: 0.00002,
+                lon: 0.009 - 6.0 * Double(second) / 111_320.0,
+                speedMps: 6.0,
+                headingDeg: 270))
+        }
+    }
+
+    private func activeMemoryStates(in engine: RideEngine) throws -> [String] {
+        let trace = try JSONSerialization.jsonObject(
+            with: engine.recorder.exportPolicyTrace()) as! [String: Any]
+        return (trace["personal_memory"] as! [[String: Any]]).compactMap { $0["state"] as? String }
+    }
+
+    func testDirectionalZoneAppliesRidingWithItAndNotAgainstIt() throws {
+        let (segments, zones) = try fixtureSegmentsAndZones()
+        let segmentID = zones[0].segmentIDs[0]
+        // The fixture's ways run east, so the squeeze segment's node order
+        // does too — .forward is the eastbound pass. Pinned rather than
+        // assumed: the whole test turns on it.
+        let bearing = segments.first { $0.id == segmentID }?.nodeOrderBearingDeg
+        XCTAssertEqual(try XCTUnwrap(bearing), 90, accuracy: 1)
+
+        let eastbound = PersonalMemoryStore()
+        eastbound.recordUnsafeZone(segmentID: segmentID, directions: .forward)
+        let withTheZone = RideEngine(segments: segments, zones: zones,
+                                     personalMemoryStore: eastbound,
+                                     rideID: "directional-with",
+                                     startedAt: "2026-07-22T00:00:00Z")
+        ride(withTheZone)
+        XCTAssertEqual(try activeMemoryStates(in: withTheZone), ["UNSAFE"],
+                       "riding the way the zone was drawn must apply it")
+
+        let againstIt = RideEngine(segments: segments, zones: zones,
+                                   personalMemoryStore: eastbound,
+                                   rideID: "directional-against",
+                                   startedAt: "2026-07-22T01:00:00Z")
+        rideWestbound(againstIt)
+        XCTAssertEqual(try activeMemoryStates(in: againstIt), [],
+                       "riding the other way must leave the zone silent — this is the whole point")
+    }
+
+    func testABidirectionalZoneStillAppliesBothWays() throws {
+        // Regression guard: a zone drawn without `directional`, and every
+        // in-ride marker tap, must behave exactly as before cue#30.
+        let (segments, zones) = try fixtureSegmentsAndZones()
+        let store = PersonalMemoryStore()
+        store.recordUnsafeMarker(segmentID: zones[0].segmentIDs[0])
+
+        let eastbound = RideEngine(segments: segments, zones: zones, personalMemoryStore: store,
+                                   rideID: "bidirectional-east",
+                                   startedAt: "2026-07-22T00:00:00Z")
+        ride(eastbound)
+        let westbound = RideEngine(segments: segments, zones: zones, personalMemoryStore: store,
+                                   rideID: "bidirectional-west",
+                                   startedAt: "2026-07-22T01:00:00Z")
+        rideWestbound(westbound)
+
+        XCTAssertEqual(try activeMemoryStates(in: eastbound), ["UNSAFE"])
+        XCTAssertEqual(try activeMemoryStates(in: westbound), ["UNSAFE"])
+    }
+
+    /// A one-sample course reversal costs one sample of memory, and cue#30
+    /// neither improved nor worsened that: `RouteEventTracker.approachGateDeg`
+    /// is a DIRECTED 90° gate, so a reversed course drops the zone's route
+    /// event outright for that sample, and no event means no memory to
+    /// resolve — the same clear-and-reactivate this ride logged before the
+    /// direction gate existed. The `latchedDirection` cache cannot prevent
+    /// it (it holds a direction for a segment IN play, and this segment
+    /// leaves play for that sample); pinning the shape here so a future
+    /// change to either gate has to notice it.
+    func testAReversedCourseSampleCostsOneSampleOfMemoryAsItAlwaysHas() throws {
+        let (segments, zones) = try fixtureSegmentsAndZones()
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: zones[0].segmentIDs[0], directions: .forward)
+        let engine = RideEngine(segments: segments, zones: zones, personalMemoryStore: store,
+                                rideID: "directional-heading-spike",
+                                startedAt: "2026-07-22T00:00:00Z")
+        for second in 0..<120 {
+            engine.process(RideFix(
+                tMs: UInt32(second * 1000),
+                lat: 0.00002,
+                lon: -0.004 + 6.0 * Double(second) / 111_320.0,
+                speedMps: 6.0,
+                headingDeg: second == 60 ? 270 : 90))
+        }
+        XCTAssertEqual(try activeMemoryStates(in: engine), ["UNSAFE", "NEUTRAL", "UNSAFE"])
+    }
+
+    /// The reviewer's case on #32: one bad course on the first fix used to
+    /// latch the wrong direction and gate a directional zone out for the
+    /// WHOLE approach — a suppressed cue, strictly worse than the pre-cue#30
+    /// behavior of applying the record both ways. Corroboration bounds it to
+    /// the single spiked sample.
+    func testAFirstFixCourseSpikeDoesNotSuppressTheApproach() throws {
+        let (segments, zones) = try fixtureSegmentsAndZones()
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: zones[0].segmentIDs[0], directions: .forward)
+        let engine = RideEngine(segments: segments, zones: zones, personalMemoryStore: store,
+                                rideID: "directional-first-fix-spike",
+                                startedAt: "2026-07-22T00:00:00Z")
+        for second in 0..<120 {
+            engine.process(RideFix(
+                tMs: UInt32(second * 1000),
+                lat: 0.00002,
+                lon: -0.004 + 6.0 * Double(second) / 111_320.0,
+                speedMps: 6.0,
+                // 269 is 91 degrees off the eastbound segment — just past the
+                // gate, so it resolves backward.
+                headingDeg: second == 0 ? 269 : 90))
+        }
+        XCTAssertEqual(try activeMemoryStates(in: engine), ["UNSAFE"],
+                       "one bad fix must cost one sample, not the whole approach")
+    }
+
+    /// Two events in one step can name the same segment, and resolving
+    /// direction per EVENT advanced the corroboration counter twice on a
+    /// single fix — latching in one step and defeating the guard, so a
+    /// first-fix spike would suppress the approach after all.
+    ///
+    /// SqueezeScorer partitions segments, so its zones never share one; the
+    /// zones are therefore built BY HAND here and handed straight to
+    /// RideEngine, which takes them as a parameter. Driving this through the
+    /// scorer's own output would not exercise the dedup at all — the version
+    /// of this test that did was passing whether the dedup existed or not.
+    func testTwoEventsOnOneSegmentDoNotLatchInASingleStep() throws {
+        let (segments, scored) = try fixtureSegmentsAndZones()
+        let shared = scored[0]
+        let overlapping = [
+            shared,
+            SqueezeZone(eventID: shared.eventID &+ 1, segmentIDs: shared.segmentIDs,
+                        severity: shared.severity, confidence: shared.confidence,
+                        reasonsBitmask: shared.reasonsBitmask, lengthM: shared.lengthM),
+        ]
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: shared.segmentIDs[0], directions: .forward)
+        let engine = RideEngine(segments: segments, zones: overlapping,
+                                personalMemoryStore: store,
+                                rideID: "directional-overlapping-events",
+                                startedAt: "2026-07-22T00:00:00Z")
+        for second in 0..<120 {
+            engine.process(RideFix(
+                tMs: UInt32(second * 1000),
+                lat: 0.00002,
+                lon: -0.004 + 6.0 * Double(second) / 111_320.0,
+                speedMps: 6.0,
+                // Two events name this segment every step, so without the
+                // per-segment dedup this one spiked fix corroborates itself
+                // and latches .backward for the whole approach.
+                headingDeg: second == 0 ? 269 : 90))
+        }
+        XCTAssertEqual(try activeMemoryStates(in: engine), ["UNSAFE"],
+                       "one bad fix must still cost one sample, not the approach")
+    }
+
+    /// A too_late notice bonus is orthogonal to unsafe/suppress and applies
+    /// for ANY state (RFC 0002 D4), so a NEUTRAL record carrying one is a
+    /// real kernel input, not a leak — and the recorder logs it, so replay
+    /// exercises exactly what the live path sent. Pins both halves: the
+    /// change point exists, and it carries the bonus.
+    func testANeutralRecordWithANoticeBonusIsRecordedForReplay() throws {
+        let (segments, zones) = try fixtureSegmentsAndZones()
+        let segmentID = zones[0].segmentIDs[0]
+        let store = PersonalMemoryStore()
+        // too_late review (bonus, no keep/kill state) + a zone pointing the
+        // other way, so this ride resolves NEUTRAL while the bonus stands.
+        store.recordReview(segmentID: segmentID, outcome: .tooLate)
+        store.replaceUnsafeZones(directionsBySegment: [segmentID: .backward])
+
+        let engine = RideEngine(segments: segments, zones: zones, personalMemoryStore: store,
+                                rideID: "neutral-with-bonus",
+                                startedAt: "2026-07-22T00:00:00Z")
+        ride(engine)  // eastbound: the .backward zone does not apply
+
+        let trace = try JSONSerialization.jsonObject(
+            with: engine.recorder.exportPolicyTrace()) as! [String: Any]
+        let memory = trace["personal_memory"] as! [[String: Any]]
+        XCTAssertEqual(memory.count, 1, "a bonus-carrying NEUTRAL must reach the trace")
+        XCTAssertEqual(memory[0]["state"] as? String, "NEUTRAL")
+        XCTAssertEqual(memory[0]["notice_bonus_s"] as? Int, 2)
+    }
+
     func testUnaffectedRideStillCuesNormally() throws {
         // Regression guard: an engine with a fresh, empty store (the
         // default) behaves exactly as the pre-Phase-3 baseline.

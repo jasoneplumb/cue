@@ -110,7 +110,15 @@ public final class RideTraceRecorder {
         records.append(Record(sample: sample, events: events, decision: decision,
                               headingKnown: headingKnown))
         let current: (segmentID: UInt32, state: PersonalMemoryState, noticeBonusS: UInt8)
-        if let resolvedMemory {
+        // A resolution of NEUTRAL + 0 is byte-for-byte equivalent to passing
+        // memory == NULL (RFC 0002 D5), so it is not logged as a change point
+        // in its own right — a record naming a segment while carrying no bias
+        // tells replay nothing. RideEngine normalizes such a resolution to nil
+        // before it reaches either the kernel or this recorder, so the two
+        // paths cannot disagree about what the kernel saw; the check is kept
+        // here as a belt-and-braces guard for any other caller of record().
+        if let resolvedMemory,
+           resolvedMemory.state != .neutral || resolvedMemory.noticeBonusS != 0 {
             current = (resolvedMemory.segmentID, resolvedMemory.state, resolvedMemory.noticeBonusS)
         } else if lastLoggedMemory.segmentID != 0 {
             // Clearing an active record: keep ITS segment_id rather than

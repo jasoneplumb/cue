@@ -82,6 +82,51 @@ public final class RideEngine {
     /// recorded on past rides bias live cueing on this one (RFC 0002).
     private let personalMemoryStore: PersonalMemoryStore
     private var lastTMs: UInt32?
+    /// Node-order bearing per segment, built once — the comparand a fix's
+    /// course is resolved against to decide which way the rider is
+    /// travelling a segment whose memory record is direction-gated (cue#30).
+    /// Segments with no bearing (degenerate geometry) are simply absent.
+    private let segmentBearingDeg: [UInt32: Double]
+    /// Travel direction latched per segment while it is in play (cue#30),
+    /// and the candidate accumulating evidence for a segment not yet latched.
+    ///
+    /// Held rather than recomputed per sample because course jitter near the
+    /// 90° gate would otherwise dither the bias and fill the trace's
+    /// personal_memory[] with change points describing GPS noise. Mirrors
+    /// RouteEventTracker.entryEndpoint, which latches the endpoint a zone was
+    /// entered through for the same reason.
+    ///
+    /// CORROBORATED before it latches, though — `directionLatchSamples`
+    /// consecutive samples must agree, the same discipline
+    /// SegmentMatcher.hysteresisSamples applies so "a single heading spike
+    /// cannot flap the match". Latching on the first fix would let one bad
+    /// course decide an entire approach: a transient reading 91° off the
+    /// segment latches the wrong way, every correct fix afterwards is
+    /// ignored, and a directional zone is gated OUT for the whole approach.
+    /// That is a SUPPRESSED cue — strictly worse than the pre-cue#30
+    /// behavior of applying the record both ways, and not a direction this
+    /// feature may fail in.
+    ///
+    /// Before it latches, each sample's own resolution is used PROVISIONALLY
+    /// rather than withheld — a rider going the wrong way is gated out from
+    /// the first sample, as intended, and a spike costs exactly one sample
+    /// instead of an approach. Two nil meanings are kept apart here: no
+    /// course at all reads nil and applies the record (the gate cannot reject
+    /// what it cannot measure), while a measured-but-uncorroborated course
+    /// still gates.
+    ///
+    /// Scope, precisely: this holds the direction for a segment that STAYS in
+    /// play. It cannot help when a course transient is large enough to trip
+    /// RouteEventTracker's own directed approach gate, because that drops the
+    /// route event entirely and there is then no memory to resolve at all —
+    /// pre-existing behavior, unchanged by cue#30 and pinned by
+    /// PersonalMemoryIntegrationTests.
+    private var latchedDirection: [UInt32: TravelDirection] = [:]
+    private var directionCandidate: [UInt32: (direction: TravelDirection, count: Int)] = [:]
+
+    /// Consecutive agreeing samples before a segment's direction latches —
+    /// mirrors SegmentMatcher.hysteresisSamples, for the same reason.
+    static let directionLatchSamples = 2
 
     /// `config == nil` applies the spec §8 defaults. `startedAt` is the
     /// ride's wall-clock start, ISO 8601 UTC (caller-formatted so exports
@@ -98,6 +143,14 @@ public final class RideEngine {
         matcher = SegmentMatcher(segments: segments)
         tracker = RouteEventTracker(segments: segments, zones: zones)
         policy = CuePolicy(config: config)
+        segmentBearingDeg = Dictionary(
+            segments.compactMap { segment in
+                segment.nodeOrderBearingDeg.map { (segment.id, $0) }
+            },
+            // Ids are unique by construction (SegmentImporter allocates them
+            // from (way, split)); keeping the first is a defensive tie-break,
+            // not an expected path.
+            uniquingKeysWith: { first, _ in first })
         self.personalMemoryStore = personalMemoryStore
         recorder = RideTraceRecorder(rideID: rideID, startedAt: startedAt,
                                      config: config ?? CuePolicy.defaultConfig(),
@@ -147,7 +200,28 @@ public final class RideEngine {
             heading_deg_x10: UInt16((heading * 10).rounded()) % 3600,
             segment_id: match?.segmentID ?? 0)
 
-        let resolvedMemory = resolveMemory(events: events)
+        // NEUTRAL + 0 is byte-for-byte equivalent to memory == NULL (RFC 0002
+        // D5), so it is normalized to nil HERE — before the kernel call, the
+        // Pico link, and the recorder alike. Passing it to the kernel while
+        // the trace omitted it left the live and replay paths handing the
+        // kernel different inputs for the same rider state: no divergence
+        // today, since the kernel ignores a NEUTRAL record, but exactly the
+        // shape NFR-003 exists to prevent the moment it stops ignoring it.
+        // A direction-gated segment resolves NEUTRAL on every pass the other
+        // way, so this is now the common case rather than a corner.
+        // Built once and threaded through: two calls, however identical,
+        // reintroduce the divergence the single definition exists to remove
+        // the moment either call site's input is transformed first.
+        let inPlay = segmentsInPlay(events)
+        let resolvedMemory = resolveMemory(events: events, inPlay: inPlay,
+                                           headingDeg: fixHeading)
+            .flatMap { $0.state == .neutral && $0.noticeBonusS == 0 ? nil : $0 }
+        // Drop latches for segments that left play, so the next approach
+        // resolves its own direction. A segment dropped by the maxEventsPerStep
+        // cap re-latches when it next produces an event — the cap is a wire
+        // constraint, and re-resolving is the same work the first approach did.
+        latchedDirection = latchedDirection.filter { inPlay.contains($0.key) }
+        directionCandidate = directionCandidate.filter { inPlay.contains($0.key) }
         let kernelMemory = resolvedMemory.map {
             PersonalMemory(segment_id: $0.segmentID, state: $0.state.rawValue,
                            notice_bonus_s: $0.noticeBonusS)
@@ -247,10 +321,28 @@ public final class RideEngine {
     /// flagged in the implementation plan, not solved here; the fully
     /// general version needs on-demand graph-distance queries against
     /// RouteEventTracker's road graph for arbitrary remembered segments.
-    private func resolveMemory(events: [RouteEvent]) -> ResolvedPersonalMemory? {
+    private func resolveMemory(events: [RouteEvent], inPlay: Set<UInt32>,
+                               headingDeg: Double?) -> ResolvedPersonalMemory? {
+        // Once per DISTINCT segment, not once per event. Two events can name
+        // the same segment in one step (overlapping zones), and resolving per
+        // event would advance the corroboration counter twice on one fix —
+        // latching in a single step and defeating the guard entirely.
+        // Non-optional value type, matching the offline twin: assigning nil
+        // to a Dictionary subscript REMOVES the key, so the optional form
+        // promised something the type cannot do. An absent key already means
+        // "no direction".
+        var directions: [UInt32: TravelDirection] = [:]
+        for segmentID in inPlay {
+            directions[segmentID] = travelDirection(on: segmentID, headingDeg: headingDeg)
+        }
         var best: (event: RouteEvent, resolved: ResolvedPersonalMemory)?
         for event in events {
-            guard let resolved = personalMemoryStore.resolved(for: event.segment_id) else { continue }
+            // Absent means "no direction resolved this step", which the
+            // store reads as a gate that cannot reject anything.
+            let direction = directions[event.segment_id]
+            guard let resolved = personalMemoryStore.resolved(for: event.segment_id,
+                                                              travelling: direction)
+            else { continue }
             if let current = best {
                 // RFC 0002 D5 "multi-segment resolution": unsafe > suppress
                 // > neutral, ties broken by nearest-ahead (smallest
@@ -265,6 +357,62 @@ public final class RideEngine {
             }
         }
         return best?.resolved
+    }
+
+    /// The distinct segments this step's events name. One definition, used
+    /// both to resolve directions and to prune the latch: two independently
+    /// built sets over the same events could disagree about what is in play
+    /// if either side's input were ever transformed first.
+    private func segmentsInPlay(_ events: [RouteEvent]) -> Set<UInt32> {
+        Set(events.map(\.segment_id))
+    }
+
+    /// Which way the rider is travelling `segmentID`: this sample's own
+    /// resolution until `directionLatchSamples` consecutive samples agree,
+    /// the latched one after that. nil — which the store reads as "cannot
+    /// reject anything" — only when there is nothing to measure: no course on
+    /// the fix, or no bearing for the segment.
+    ///
+    /// The comparand is the EVENT's segment, not the matched one: memory
+    /// applies to a segment plus an approach window ahead of it (RFC 0002
+    /// D3), and "forward" is defined by that segment's own node order, so
+    /// judging it against the road the rider currently occupies would be
+    /// meaningless for anything upcoming. On approach this is a heuristic —
+    /// course now versus a segment not yet reached — bounded by the 90° gate,
+    /// by corroboration, and by the fact that an unresolved direction applies
+    /// the record rather than withholding it.
+    /// NOT a pure query despite reading like one: it advances the
+    /// corroboration counter and can latch. Correctness therefore depends on
+    /// `resolveMemory` calling it exactly ONCE per distinct segment per step
+    /// — a second call on one fix corroborates that fix against itself and
+    /// latches immediately, the bug
+    /// `testTwoEventsOnOneSegmentDoNotLatchInASingleStep` exists to catch.
+    /// `segmentsInPlay` enforces the once-per-segment rule; a new caller has
+    /// to preserve it.
+    ///
+    /// Two known limits, both bounded by the latch clearing when a segment
+    /// leaves play, and neither fixable by corroboration. A zone imported
+    /// MID-APPROACH does not invalidate a latch already held, so the rest of
+    /// that one approach uses the pre-import direction. And a segment that
+    /// produces exactly ONE event ever cannot be corroborated at all — that
+    /// sample's own reading decides it, because no second sample exists to
+    /// agree or disagree.
+    private func travelDirection(on segmentID: UInt32,
+                                 headingDeg: Double?) -> TravelDirection? {
+        if let latched = latchedDirection[segmentID] { return latched }
+        guard let headingDeg, let bearing = segmentBearingDeg[segmentID] else { return nil }
+        let direction = TravelDirection.resolve(headingDeg: headingDeg, alongBearingDeg: bearing)
+        // One lookup, no force-unwrap: the two-subscript form was sound only
+        // because the condition and the unwrap sat in one expression.
+        let count = directionCandidate[segmentID]
+            .map { $0.direction == direction ? $0.count + 1 : 1 } ?? 1
+        if count >= Self.directionLatchSamples {
+            directionCandidate[segmentID] = nil
+            latchedDirection[segmentID] = direction
+        } else {
+            directionCandidate[segmentID] = (direction, count)
+        }
+        return direction
     }
 
     /// The outcome last forwarded to personalMemoryStore per event id — so
