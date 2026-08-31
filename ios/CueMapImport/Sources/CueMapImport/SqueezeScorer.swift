@@ -92,7 +92,7 @@ public enum SqueezeScorer {
     /// tag (positive or explicit-no). Segment-weighted: long ways split
     /// into more segments and count proportionally more, approximating
     /// length weighting without geometry math.
-    static func ridingSpaceTagCoverage(byClass segments: [RoadSegment]) -> [String: Double] {
+    public static func ridingSpaceTagCoverage(byClass segments: [RoadSegment]) -> [String: Double] {
         var total: [String: Int] = [:]
         var tagged: [String: Int] = [:]
         for segment in segments {
@@ -143,6 +143,47 @@ public enum SqueezeScorer {
             }
         }
         return (mph >= 45 ? severityAtHighSpeed : severityAtFloor, confidence)
+    }
+
+    /// Why `score` returned nil for this segment, or nil when it scored.
+    /// Human-readable and for diagnostics only — no caller branches on it.
+    ///
+    /// Exists because "my drawn zone does nothing" has five different causes
+    /// with five different remedies (redraw it, edit OSM, accept the scorer's
+    /// judgment, nothing), and without this the operator cannot tell them
+    /// apart except by reading the scorer (#38).
+    public static func rejectionReason(_ segment: RoadSegment,
+                                       coverage: [String: Double],
+                                       riderAsserted: Bool = false) -> String? {
+        let attrs = segment.attributes
+        guard arterialClasses.contains(attrs.highway) else {
+            return "highway=\(attrs.highway) is not an arterial class"
+        }
+        guard let lanes = attrs.lanes else {
+            return "no lanes tag — the narrow-lane proxy has nothing to read"
+        }
+        guard lanes <= maxSqueezeLanes else {
+            return "lanes=\(lanes) exceeds \(maxSqueezeLanes): not the narrow-lane case"
+        }
+        guard let mph = attrs.maxspeedMph else {
+            return "no maxspeed tag — no basis for high-speed context or severity"
+        }
+        guard mph >= minSqueezeMph else {
+            return "maxspeed=\(mph) mph is below the \(minSqueezeMph) mph floor"
+        }
+        switch attrs.ridingSpace {
+        case .dedicatedSpace:
+            return "tagged with dedicated riding space — not a squeeze"
+        case .explicitNone, .untagged:
+            if attrs.ridingSpace == .untagged, !riderAsserted,
+               coverage[attrs.highway, default: 0] < meaningfulAbsenceCoverage {
+                return "untagged riding space on a class tagged "
+                    + String(format: "%.0f%%", coverage[attrs.highway, default: 0] * 100)
+                    + " in this region (needs \(Int(meaningfulAbsenceCoverage * 100))%) "
+                    + "— draw a custom zone over it to assert the absence yourself"
+            }
+            return nil
+        }
     }
 
     /// Merge contiguous qualifying segments (shared boundary nodes) into
