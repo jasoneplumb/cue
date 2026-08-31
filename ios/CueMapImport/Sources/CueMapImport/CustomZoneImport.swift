@@ -22,6 +22,77 @@ public struct CustomZoneFeature: Codable, Equatable, Sendable {
     public let label: String?
     /// [lng, lat] pairs, GeoJSON coordinate order — mirrors webmap.dev's export.
     public let coordinates: [[Double]]
+    /// The zone applies only while travelling its own vertex order, first ->
+    /// last (cue#30 / webmap.dev#277). False for a zone drawn without the
+    /// property, so every file exported before it existed keeps its exact
+    /// meaning: bidirectional.
+    public let directional: Bool
+
+    /// `directional` defaults to the pre-cue#30 meaning so existing call
+    /// sites — and any caller constructing a zone that carries no direction —
+    /// read as bidirectional without restating it.
+    /// Truncated positions are dropped rather than rejected here — this is
+    /// the one entry point with no way to report a failure, and trapping on
+    /// caller-supplied geometry is worse than snapping the rest of the zone.
+    /// The two entry points that CAN report (parseFeatures, init(from:))
+    /// reject instead. What matters is that no path lets a truncated position
+    /// reach matchSegments, where it would silently degrade a directional
+    /// zone to .both; dropping and rejecting both satisfy that.
+    public init(id: String, createdAt: String, label: String?,
+                coordinates: [[Double]], directional: Bool = false) {
+        self.id = id
+        self.createdAt = createdAt
+        self.label = label
+        self.coordinates = coordinates.filter { $0.count >= 2 }
+        self.directional = directional
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, createdAt, label, coordinates, directional
+    }
+
+    /// Hand-written so `directional` decodes as false when the key is absent.
+    /// The memberwise default above is invisible to a synthesized decoder,
+    /// which requires every non-optional property to be present — so a value
+    /// encoded before this property existed would fail to decode outright.
+    /// `parseFeatures` reads GeoJSON through JSONSerialization and never
+    /// takes this path, but the public Codable conformance is a contract in
+    /// its own right, and "absent means bidirectional" has to hold on both.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        let decoded = try container.decode([[Double]].self, forKey: .coordinates)
+        // The same >= 2 POSITIONS check parseFeatures makes, not just the
+        // per-position one below: a single-vertex zone has no edge, so a
+        // directional one would reach matchSegments and resolve .both — the
+        // silent degradation this validation exists to prevent.
+        guard decoded.count >= 2 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .coordinates, in: container,
+                debugDescription: "LineString needs at least 2 positions")
+        }
+        // The same position check parseFeatures makes. Both entry points must
+        // enforce it or the weaker one becomes a way in: matchSegments can
+        // only SKIP a truncated position, so a directional zone would quietly
+        // resolve .both instead of the direction it was drawn with, with no
+        // diagnostic anywhere.
+        if let bad = CustomZoneFeature.firstTruncatedPosition(in: decoded) {
+            throw DecodingError.dataCorruptedError(
+                forKey: .coordinates, in: container,
+                debugDescription: "position \(bad) must be [lng, lat] number pairs")
+        }
+        coordinates = decoded
+        directional = try container.decodeIfPresent(Bool.self, forKey: .directional) ?? false
+    }
+
+    /// Index of the first position with fewer than two elements, or nil when
+    /// every position is at least [lng, lat] (a third altitude element is
+    /// fine). Shared by both entry points — see `init(from:)`.
+    static func firstTruncatedPosition(in coordinates: [[Double]]) -> Int? {
+        coordinates.firstIndex { $0.count < 2 }
+    }
 }
 
 public enum CustomZoneImportError: Error, Equatable {
@@ -32,12 +103,29 @@ public enum CustomZoneImportError: Error, Equatable {
 
 /// Result of snapping a set of custom zones to a region's segments.
 public struct CustomZoneMatchResult: Equatable, Sendable {
-    /// Segment ids matched per zone id — a drawn zone can span several
-    /// segments, same as a derived SqueezeZone's member segments.
-    public let matches: [String: Set<UInt32>]
+    /// Per zone id, the segments it matched and the direction along each
+    /// segment's node order the zone applies in — a drawn zone can span
+    /// several segments, same as a derived SqueezeZone's member segments,
+    /// and a zone that doubles back within one segment unions to `.both`.
+    /// A non-directional zone maps every match to `.both`.
+    public let matches: [String: [UInt32: ZoneDirectionMask]]
     /// Zone ids with no segment within the snap distance — surfaced to the
     /// caller rather than silently dropped.
     public let unmatchedZoneIDs: [String]
+
+    /// Every segment any zone matched, with the directions unioned across
+    /// zones — the whole-file view callers that fold zones into per-segment
+    /// state need (two opposing one-way zones on one road are one segment
+    /// flagged `.both`, which is what the rider drew).
+    public var directionsBySegment: [UInt32: ZoneDirectionMask] {
+        var unioned: [UInt32: ZoneDirectionMask] = [:]
+        for segmentDirections in matches.values {
+            for (segmentID, directions) in segmentDirections {
+                unioned[segmentID, default: []].formUnion(directions)
+            }
+        }
+        return unioned
+    }
 }
 
 public enum CustomZoneImport {
@@ -70,6 +158,16 @@ public enum CustomZoneImport {
                 throw CustomZoneImportError.malformedFeature(
                     index: index, reason: "geometry must be a LineString with >= 2 positions")
             }
+            // Each position needs [lng, lat] (a third altitude element is
+            // fine). Checking only the position COUNT above would let a
+            // truncated position through to matchSegments, which can only
+            // skip it — quietly degrading the zone's direction rather than
+            // reporting the malformed file this parser promises to reject.
+            if let bad = CustomZoneFeature.firstTruncatedPosition(in: rawCoordinates) {
+                throw CustomZoneImportError.malformedFeature(
+                    index: index,
+                    reason: "position \(bad) must be [lng, lat] number pairs")
+            }
             guard let properties = feature["properties"] as? [String: Any],
                   properties["kind"] as? String == "custom_zone",
                   let id = properties["id"] as? String, !id.isEmpty,
@@ -77,10 +175,25 @@ public enum CustomZoneImport {
                 throw CustomZoneImportError.malformedFeature(
                     index: index, reason: "properties must have kind=\"custom_zone\", id, created_at")
             }
+            // Absent means bidirectional (the pre-cue#30 contract); present
+            // but not a boolean is malformed, same all-or-nothing rule as
+            // every other property. JSON `1`/`0` also satisfies `as? Bool`
+            // through NSNumber bridging — a lenient reading of an
+            // unambiguous intent, and webmap.dev's own parser rejects it at
+            // the only place these files are authored.
+            var directional = false
+            if let rawDirectional = properties["directional"] {
+                guard let flag = rawDirectional as? Bool else {
+                    throw CustomZoneImportError.malformedFeature(
+                        index: index, reason: "property directional must be a boolean")
+                }
+                directional = flag
+            }
             result.append(CustomZoneFeature(
                 id: id, createdAt: createdAt,
                 label: properties["label"] as? String,
-                coordinates: rawCoordinates))
+                coordinates: rawCoordinates,
+                directional: directional))
         }
         return result
     }
@@ -90,6 +203,20 @@ public enum CustomZoneImport {
     /// an imported custom zone and a live GPS fix agree on "close enough").
     /// A zone matches every DISTINCT segment any of its vertices lands on —
     /// a drawn zone can legitimately span more than one segment.
+    ///
+    /// For a `directional` zone each match also resolves WHICH WAY along that
+    /// segment's node order the zone runs (cue#30): the zone's LOCAL edge
+    /// bearing at the snapped vertex against the bearing of the segment edge
+    /// it snapped to. Local, not the zone's overall start->end bearing — a
+    /// drawn zone can curve across several segments, and one bearing for the
+    /// whole zone would misjudge every segment but the straightest. A
+    /// non-directional zone, a lone vertex, or a vertex with no usable local
+    /// edge (duplicate consecutive points) resolves `.both`, which is both
+    /// the pre-cue#30 behavior and the conservative direction.
+    ///
+    /// Both bearings are taken in this function's own projected space, so
+    /// they are directly comparable; only self-consistency matters (see the
+    /// file header's projection note).
     public static func matchSegments(
         for features: [CustomZoneFeature], segments: [RoadSegment],
         maxDistanceM: Double = SegmentMatcher.matchRadiusM
@@ -128,30 +255,74 @@ public enum CustomZoneImport {
             }
         }
 
-        func nearestSegment(lat: Double, lon: Double) -> UInt32? {
+        /// `edgeBearingDeg` is nil when the winning edge is zero-length
+        /// (consecutive duplicate OSM nodes): atan2(0, 0) reports north, and
+        /// judging a zone's direction against a phantom bearing could flip
+        /// forward and backward outright. SegmentMatcher drops such edges
+        /// when building its index; here the edge is KEPT so a zone near a
+        /// degenerate segment still snaps to it as it always has — only the
+        /// direction is withheld, which the caller reads as `.both`.
+        func nearestSegment(lat: Double, lon: Double)
+            -> (segmentID: UInt32, edgeBearingDeg: Double?)? {
             let p = project(lat: lat, lon: lon)
-            var best: (distanceM: Double, segmentID: UInt32)?
+            var best: (distanceM: Double, segmentID: UInt32, bearingDeg: Double?)?
             for edge in edges {
                 let distance = pointToEdgeDistance(p, edge.a, edge.b)
-                if best == nil || distance < best!.distanceM {
-                    best = (distance, edge.segmentID)
+                let degenerate = edge.a.x == edge.b.x && edge.a.y == edge.b.y
+                let bearing = degenerate ? nil : bearingDeg(edge.a, edge.b)
+                guard let current = best else {
+                    best = (distance, edge.segmentID, bearing)
+                    continue
                 }
+                // Ties break on (distance, has-a-bearing, segment id). A
+                // duplicate OSM node sits exactly ON its neighbouring edges,
+                // so a tie is the COMMON case rather than a curiosity, and
+                // letting the point win would throw away a direction the road
+                // plainly has. Segment id is the final key so a tie ACROSS
+                // segments — a degenerate node at a junction — resolves the
+                // same way every run instead of following edge order (NFR-003).
+                let better: Bool
+                if distance != current.distanceM {
+                    better = distance < current.distanceM
+                } else if (bearing != nil) != (current.bearingDeg != nil) {
+                    better = bearing != nil
+                } else {
+                    better = edge.segmentID < current.segmentID
+                }
+                if better { best = (distance, edge.segmentID, bearing) }
             }
             guard let best, best.distanceM <= maxDistanceM else { return nil }
-            return best.segmentID
+            return (best.segmentID, best.bearingDeg)
         }
 
-        var matches: [String: Set<UInt32>] = [:]
+        var matches: [String: [UInt32: ZoneDirectionMask]] = [:]
         var unmatched: [String] = []
         for feature in features {
-            var matchedIDs: Set<UInt32> = []
-            for coordinate in feature.coordinates {
-                // GeoJSON order: [lng, lat], optionally [lng, lat, alt] — a
-                // 3D position (altitude) is still a valid vertex to snap.
-                guard coordinate.count >= 2 else { continue }
-                if let segmentID = nearestSegment(lat: coordinate[1], lon: coordinate[0]) {
-                    matchedIDs.insert(segmentID)
+            // Only a directional zone reads these, and projecting is
+            // O(vertices) per zone — skipped entirely for the common
+            // bidirectional case rather than computed and discarded.
+            let projected: [(x: Double, y: Double)?] = feature.directional
+                ? feature.coordinates.map { coordinate in
+                    // GeoJSON order: [lng, lat], optionally [lng, lat, alt] —
+                    // a 3D position (altitude) is still a valid vertex.
+                    coordinate.count >= 2 ? project(lat: coordinate[1], lon: coordinate[0]) : nil
                 }
+                : []
+            var matchedIDs: [UInt32: ZoneDirectionMask] = [:]
+            for (index, coordinate) in feature.coordinates.enumerated() {
+                guard coordinate.count >= 2,
+                      let hit = nearestSegment(lat: coordinate[1], lon: coordinate[0])
+                else { continue }
+                let directions: ZoneDirectionMask
+                if feature.directional,
+                   let zoneBearing = localBearingDeg(of: projected, at: index),
+                   let edgeBearing = hit.edgeBearingDeg {
+                    directions = ZoneDirectionMask(TravelDirection.resolve(
+                        headingDeg: zoneBearing, alongBearingDeg: edgeBearing))
+                } else {
+                    directions = .both
+                }
+                matchedIDs[hit.segmentID, default: []].formUnion(directions)
             }
             if matchedIDs.isEmpty {
                 unmatched.append(feature.id)
@@ -160,6 +331,47 @@ public enum CustomZoneImport {
             }
         }
         return CustomZoneMatchResult(matches: matches, unmatchedZoneIDs: unmatched)
+    }
+
+    /// The zone's own direction of travel AT vertex `index`: the edge leaving
+    /// that vertex, or — for the LAST vertex, which has none — the edge
+    /// arriving at it. nil when neither exists or both are zero-length
+    /// (a lone vertex, or a double-tapped point), leaving the caller to fall
+    /// back to `.both` rather than judging direction off a phantom bearing,
+    /// the same reason SegmentMatcher skips zero-length edges outright.
+    ///
+    /// The incoming-edge fallback is reserved for the last vertex ONLY. Using
+    /// it whenever the outgoing neighbour is unusable would be worse than no
+    /// answer: on a zone that reverses right after the gap, the incoming
+    /// bearing is the exact OPPOSITE of the direction meant there, so the
+    /// zone would fire the wrong way — the one outcome a conservative
+    /// fallback exists to prevent.
+    private static func localBearingDeg(of projected: [(x: Double, y: Double)?],
+                                        at index: Int) -> Double? {
+        // Bounds-checked: `projected` is empty for a non-directional zone,
+        // and relying on the caller's short-circuit to keep us out of here
+        // would make this a trap waiting for a refactor.
+        guard index < projected.count, let here = projected[index] else { return nil }
+        if index + 1 < projected.count {
+            guard let next = projected[index + 1],
+                  next.x != here.x || next.y != here.y else { return nil }
+            return bearingDeg(here, next)
+        }
+        if index > 0, let previous = projected[index - 1],
+           here.x != previous.x || here.y != previous.y {
+            return bearingDeg(previous, here)
+        }
+        return nil
+    }
+
+    /// Compass bearing of a->b in the caller's projected space, degrees
+    /// [0, 360) — same formula as SegmentMatcher.bearingDeg, duplicated for
+    /// the same reason pointToEdgeDistance is (that one is private to
+    /// SegmentMatcher's own projection; this consumer owns its anchor).
+    private static func bearingDeg(_ a: (x: Double, y: Double),
+                                   _ b: (x: Double, y: Double)) -> Double {
+        let bearing = atan2(b.x - a.x, b.y - a.y) * 180 / .pi
+        return bearing < 0 ? bearing + 360 : bearing
     }
 
     /// (distance) from point p to edge a-b, projection clamped to the edge —
