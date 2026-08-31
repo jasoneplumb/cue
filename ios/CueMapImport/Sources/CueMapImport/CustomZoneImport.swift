@@ -493,7 +493,12 @@ public enum CustomZoneImport {
             // Once per DISTINCT segment, not once per observation — a repeated
             // segment id would otherwise advance the corroboration counter
             // twice on one sample, exactly as it did live before #32.
-            var directions: [UInt32: TravelDirection?] = [:]
+            // Value type is non-optional: assigning nil to a Dictionary
+            // subscript REMOVES the key, so [UInt32: TravelDirection?] could
+            // never actually hold a nil value — the annotation promised
+            // something the type cannot do. An absent key already means "no
+            // direction", which is exactly what the lookup below reads.
+            var directions: [UInt32: TravelDirection] = [:]
             for segmentID in inPlay where directionsBySegment[segmentID] != nil {
                 directions[segmentID] = travelDirection(
                     on: segmentID, headingDeg: sample.headingDeg,
@@ -507,7 +512,7 @@ public enum CustomZoneImport {
             var sawUngated = false
             let applicable = inPlay.filter { segmentID in
                 guard let zoneDirections = directionsBySegment[segmentID] else { return false }
-                let direction = directions[segmentID] ?? nil
+                let direction = directions[segmentID]
                 // Only a MISSING COURSE is reported as ungated. A segment with
                 // no bearing also yields nil, but it is a different problem
                 // with a different remedy, and telling the operator to
