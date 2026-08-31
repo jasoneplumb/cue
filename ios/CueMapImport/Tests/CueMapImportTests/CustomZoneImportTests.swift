@@ -590,6 +590,27 @@ final class CustomZoneImportTests: XCTestCase {
                        "re-recording cannot help here, so it must not be advised")
     }
 
+    /// A latched segment stays gated when a later sample drops its course,
+    /// so those samples are NOT ungated. Counting on the sample's own heading
+    /// instead of the resolved direction reported zones the latch had in fact
+    /// resolved — a false re-record warning, and a spurious --strict refusal.
+    func testALatchedSegmentIsNotCountedAsUngatedWhenCourseDropsOut() {
+        let samples = [
+            CustomZoneImport.TraceSample(tMs: 0, headingDeg: 90),
+            CustomZoneImport.TraceSample(tMs: 1000, headingDeg: 90),  // latches .forward
+            CustomZoneImport.TraceSample(tMs: 2000, headingDeg: nil), // course drops
+        ]
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: samples,
+            observedSegmentIDs: [0: [7], 1000: [7], 2000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.ungatedSamples, 0,
+                       "the latch resolved the direction — nothing to re-record for")
+        XCTAssertEqual(resolved.changePoints,
+                       [.init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0)])
+    }
+
     func testABidirectionalZoneIsNeverCountedAsUngated() {
         let resolved = CustomZoneImport.personalMemoryChangePoints(
             directionsBySegment: [7: .both],

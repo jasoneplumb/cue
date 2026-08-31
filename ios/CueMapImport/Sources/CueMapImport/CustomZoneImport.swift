@@ -519,8 +519,14 @@ public enum CustomZoneImport {
             // problem with a different remedy: telling the operator to
             // re-record would be advice that cannot work. The two causes have
             // to stay disjoint for either piece of advice to be worth reading.
-            if sample.headingDeg == nil, inPlay.contains(where: { segmentID in
-                (directionsBySegment[segmentID].map { $0 != .both } ?? false)
+            if inPlay.contains(where: { segmentID in
+                // The RESOLVED direction, not the sample's own course: a
+                // latched segment stays gated on a headingless sample, so
+                // treating "no heading" as "not gated" reported zones as
+                // ungated that the latch had in fact resolved — a false
+                // re-record warning, and a spurious --strict refusal.
+                directions[segmentID] == nil
+                    && (directionsBySegment[segmentID].map { $0 != .both } ?? false)
                     && segmentBearingDeg[segmentID] != nil
             }) {
                 ungatedSamples += 1
