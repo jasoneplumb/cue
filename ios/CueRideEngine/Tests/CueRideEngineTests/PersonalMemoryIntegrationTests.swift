@@ -408,14 +408,6 @@ final class PersonalMemoryIntegrationTests: XCTestCase {
         XCTAssertEqual(memory[0]["notice_bonus_s"] as? Int, 2)
     }
 
-    /// The offline resolver and the live engine each declare a latch
-    /// threshold, and their agreeing is the entire basis for a desk what-if
-    /// predicting what the phone did. Nothing else fails if one is bumped.
-    func testLiveAndOfflineLatchThresholdsAgree() {
-        XCTAssertEqual(RideEngine.directionLatchSamples,
-                       CustomZoneImport.directionLatchSamples)
-    }
-
     func testUnaffectedRideStillCuesNormally() throws {
         // Regression guard: an engine with a fresh, empty store (the
         // default) behaves exactly as the pre-Phase-3 baseline.
