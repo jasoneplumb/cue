@@ -640,6 +640,32 @@ final class CustomZoneImportTests: XCTestCase {
         ])
     }
 
+    /// The prune has to clear a FULLY LATCHED segment, not just a candidate
+    /// mid-corroboration. Only the candidate case was covered, so a prune
+    /// that dropped candidates and kept latches would have passed: the held
+    /// direction would then outlive the approach that established it and
+    /// decide the next one, whichever way the rider went.
+    func testAFullyLatchedSegmentAlsoClearsWhenItLeavesPlay() {
+        let samples = [
+            // Two agreeing samples latch .forward...
+            CustomZoneImport.TraceSample(tMs: 0, headingDeg: 90),
+            CustomZoneImport.TraceSample(tMs: 1000, headingDeg: 90),
+            // ...the segment leaves play here...
+            CustomZoneImport.TraceSample(tMs: 2000, headingDeg: 90),
+            // ...and returns with the rider going the other way.
+            CustomZoneImport.TraceSample(tMs: 3000, headingDeg: 270),
+        ]
+        let resolved = CustomZoneImport.personalMemoryChangePoints(
+            directionsBySegment: [7: .forward],
+            samples: samples,
+            observedSegmentIDs: [0: [7], 1000: [7], 3000: [7]],
+            segmentBearingDeg: [7: 90])
+        XCTAssertEqual(resolved.changePoints, [
+            .init(tMs: 0, segmentID: 7, state: "UNSAFE", noticeBonusS: 0),
+            .init(tMs: 2000, segmentID: 7, state: "NEUTRAL", noticeBonusS: 0),
+        ], "a stale .forward latch would have kept the zone applied at t=3000")
+    }
+
     func testASegmentLeavingPlayRelatchesOnItsNextApproach() {
         let samples = [
             CustomZoneImport.TraceSample(tMs: 0, headingDeg: 90),

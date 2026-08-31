@@ -509,28 +509,26 @@ public enum CustomZoneImport {
                     segmentsWithoutBearing.insert(segmentID)
                 }
             }
-            var sawUngated = false
+            // Counted in its own pass rather than as a side effect inside the
+            // filter below. Set.filter is eager today, so folding the two
+            // together happens to work — and would stop working silently the
+            // moment anyone reached for first(where:) or a lazy sequence.
+            //
+            // Only a MISSING COURSE counts as ungated. A segment with no
+            // bearing also yields a nil direction, but it is a different
+            // problem with a different remedy: telling the operator to
+            // re-record would be advice that cannot work. The two causes have
+            // to stay disjoint for either piece of advice to be worth reading.
+            if sample.headingDeg == nil, inPlay.contains(where: { segmentID in
+                (directionsBySegment[segmentID].map { $0 != .both } ?? false)
+                    && segmentBearingDeg[segmentID] != nil
+            }) {
+                ungatedSamples += 1
+            }
             let applicable = inPlay.filter { segmentID in
                 guard let zoneDirections = directionsBySegment[segmentID] else { return false }
-                let direction = directions[segmentID]
-                // Only a MISSING COURSE is reported as ungated. A segment with
-                // no bearing also yields nil, but it is a different problem
-                // with a different remedy, and telling the operator to
-                // re-record would be advice that cannot work.
-                // A segment with no bearing is excluded here, not just
-                // counted elsewhere: without this guard a segment that is
-                // BOTH bearingless and on a headingless sample lands in both
-                // counters, and the tool prints "re-record with debug-GPS"
-                // next to "re-recording cannot change this" about the same
-                // segment. The two causes have to be disjoint for either
-                // piece of advice to be worth reading.
-                if sample.headingDeg == nil, zoneDirections != .both,
-                   segmentBearingDeg[segmentID] != nil {
-                    sawUngated = true
-                }
-                return zoneDirections.applies(to: direction)
+                return zoneDirections.applies(to: directions[segmentID])
             }.min()
-            if sawUngated { ungatedSamples += 1 }
             let current: (segmentID: UInt32, state: String, noticeBonusS: UInt8)
             if let applicable {
                 current = (applicable, "UNSAFE", 0)
@@ -557,8 +555,10 @@ public enum CustomZoneImport {
 
     /// Number of consecutive agreeing samples before a segment's direction
     /// latches. Mirrors RideEngine.directionLatchSamples — change BOTH or a
-    /// desk what-if stops predicting live behavior.
-    static let directionLatchSamples = 2
+    /// desk what-if stops predicting live behavior. PUBLIC because that is a
+    /// contract between two modules, and an internal constant states it only
+    /// where `@testable` can see it.
+    public static let directionLatchSamples = 2
 
     /// Offline twin of RideEngine.travelDirection: this sample's own
     /// resolution against the segment's node-order bearing until
