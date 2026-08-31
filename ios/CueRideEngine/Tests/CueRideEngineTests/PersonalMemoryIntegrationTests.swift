@@ -381,6 +381,33 @@ final class PersonalMemoryIntegrationTests: XCTestCase {
                        "one bad fix must still cost one sample, not the approach")
     }
 
+    /// A too_late notice bonus is orthogonal to unsafe/suppress and applies
+    /// for ANY state (RFC 0002 D4), so a NEUTRAL record carrying one is a
+    /// real kernel input, not a leak — and the recorder logs it, so replay
+    /// exercises exactly what the live path sent. Pins both halves: the
+    /// change point exists, and it carries the bonus.
+    func testANeutralRecordWithANoticeBonusIsRecordedForReplay() throws {
+        let (segments, zones) = try fixtureSegmentsAndZones()
+        let segmentID = zones[0].segmentIDs[0]
+        let store = PersonalMemoryStore()
+        // too_late review (bonus, no keep/kill state) + a zone pointing the
+        // other way, so this ride resolves NEUTRAL while the bonus stands.
+        store.recordReview(segmentID: segmentID, outcome: .tooLate)
+        store.replaceUnsafeZones(directionsBySegment: [segmentID: .backward])
+
+        let engine = RideEngine(segments: segments, zones: zones, personalMemoryStore: store,
+                                rideID: "neutral-with-bonus",
+                                startedAt: "2026-07-22T00:00:00Z")
+        ride(engine)  // eastbound: the .backward zone does not apply
+
+        let trace = try JSONSerialization.jsonObject(
+            with: engine.recorder.exportPolicyTrace()) as! [String: Any]
+        let memory = trace["personal_memory"] as! [[String: Any]]
+        XCTAssertEqual(memory.count, 1, "a bonus-carrying NEUTRAL must reach the trace")
+        XCTAssertEqual(memory[0]["state"] as? String, "NEUTRAL")
+        XCTAssertEqual(memory[0]["notice_bonus_s"] as? Int, 2)
+    }
+
     func testUnaffectedRideStillCuesNormally() throws {
         // Regression guard: an engine with a fresh, empty store (the
         // default) behaves exactly as the pre-Phase-3 baseline.

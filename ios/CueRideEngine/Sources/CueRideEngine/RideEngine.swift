@@ -371,9 +371,10 @@ public final class RideEngine {
         if let latched = latchedDirection[segmentID] { return latched }
         guard let headingDeg, let bearing = segmentBearingDeg[segmentID] else { return nil }
         let direction = TravelDirection.resolve(headingDeg: headingDeg, alongBearingDeg: bearing)
-        let count = directionCandidate[segmentID]?.direction == direction
-            ? directionCandidate[segmentID]!.count + 1
-            : 1
+        // One lookup, no force-unwrap: the two-subscript form was sound only
+        // because the condition and the unwrap sat in one expression.
+        let count = directionCandidate[segmentID]
+            .map { $0.direction == direction ? $0.count + 1 : 1 } ?? 1
         if count >= Self.directionLatchSamples {
             directionCandidate[segmentID] = nil
             latchedDirection[segmentID] = direction

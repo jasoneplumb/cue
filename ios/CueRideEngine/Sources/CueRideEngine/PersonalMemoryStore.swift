@@ -367,8 +367,11 @@ public final class PersonalMemoryStore {
         // undefined per Swift's own documentation. Copy-on-write happens to
         // make it safe today, but that is an implementation detail of
         // Dictionary.makeIterator(), not a guarantee to build on.
+        // Present-but-EMPTY counts as departed, not as an update: the assign
+        // loop below skips an empty mask, so treating it as present would
+        // leave the old direction standing forever with no way to clear it.
         let departed = recordsBySegment.compactMap { segmentID, record in
-            record.unsafeDirMask != 0 && directionsBySegment[segmentID] == nil
+            record.unsafeDirMask != 0 && directionsBySegment[segmentID]?.isEmpty != false
                 ? segmentID : nil
         }
         for segmentID in departed {

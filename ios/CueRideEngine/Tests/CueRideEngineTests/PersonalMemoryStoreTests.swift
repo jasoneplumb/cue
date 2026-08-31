@@ -177,6 +177,17 @@ final class PersonalMemoryStoreTests: XCTestCase {
                        "the tap stands on its own, both ways")
     }
 
+    func testReplacingWithAnExplicitlyEmptyMaskClearsTheSegment() {
+        // A present-but-empty entry has to count as departed: the assign path
+        // skips an empty mask, so treating it as an update would leave the old
+        // direction standing with no way to clear it.
+        let store = PersonalMemoryStore()
+        store.replaceUnsafeZones(directionsBySegment: [7: .forward])
+        store.replaceUnsafeZones(directionsBySegment: [7: []])
+        XCTAssertNil(store.resolved(for: 7, travelling: .forward))
+        XCTAssertEqual(store.recordCount, 0)
+    }
+
     func testAnEmptyDirectionMaskIsNotRecordedAtAll() {
         let store = PersonalMemoryStore()
         store.recordUnsafeZone(segmentID: 7, directions: [])
