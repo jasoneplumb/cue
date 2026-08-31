@@ -575,9 +575,11 @@ public enum CustomZoneImport {
         if let existing = latched[segmentID] { return existing }
         guard let headingDeg, let bearing = segmentBearingDeg[segmentID] else { return nil }
         let direction = TravelDirection.resolve(headingDeg: headingDeg, alongBearingDeg: bearing)
-        let count = candidate[segmentID]?.direction == direction
-            ? candidate[segmentID]!.count + 1
-            : 1
+        // One lookup, no force-unwrap — the same shape RideEngine's twin uses.
+        // The two-subscript form was sound only because the condition and the
+        // unwrap sat in one expression, which any refactor could separate.
+        let count = candidate[segmentID]
+            .map { $0.direction == direction ? $0.count + 1 : 1 } ?? 1
         if count >= directionLatchSamples {
             candidate[segmentID] = nil
             latched[segmentID] = direction
