@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.15.0-beta — 2026-09-12
+
+Promotion to beta; no code changes from 0.15.0-alpha. The field record —
+11,300 shadow-compared real-world steps with zero divergences and 23/23
+ride traces replaying exactly — together with the verified ablation
+evidence and the host fault-injection campaign no longer squares with an
+alpha label. The equivalence contract has held in the field; beta says so.
+
 ## 0.15.0-alpha — 2026-09-12
 
 A custom zone drawn over an untagged road now does what the overlay was
