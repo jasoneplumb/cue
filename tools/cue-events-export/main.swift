@@ -1,10 +1,19 @@
-// Intent: CLI companion to webmap.dev#231 — join a schema-v1 ride trace,
+// Intent: CLI companion to webmap.dev#231 — join a schema-v1/v2 ride trace,
 //         an optional dispatch-latency sidecar, and an Overpass `out geom;`
 //         extract into the cue-events overlay GeoJSON, resolving each
 //         event's segment_id to geometry through the SAME importer the app
 //         runs (one source of truth; no re-implementation). Usage:
 //           swift run cue-events-export <trace.json> <overpass.json> \
 //             [--latency <sidecar.json>] [--strict] [-o out.geojson]
+//           swift run cue-events-export <trace.json> --segments <cache-dir> \
+//             [--latency <sidecar.json>] [--strict] [-o out.geojson]
+//         --segments reads the phone's region cache (the manifest +
+//         segments.json pair SegmentStore writes) instead of deriving
+//         segments from an extract. Same [RoadSegment] either way, but it
+//         needs no Overpass round-trip and no bbox disclosure, and the ids
+//         come from the very region the ride ran against — so the stale-id
+//         skip below cannot fire. Prefer it when the cache is to hand; the
+//         extract path stays for regions never imported to a phone.
 //         An event whose segment has no match in the extract is skipped
 //         with a stderr warning and counted in the summary; --strict makes
 //         any skip fatal (exit 1, nothing written). When the trace carries
@@ -32,11 +41,14 @@ func warn(_ message: String) {
 let usage = """
 usage: cue-events-export <trace.json> <overpass.json> \
 [--latency <sidecar.json>] [--strict] [-o out.geojson]
+       cue-events-export <trace.json> --segments <cache-dir> \
+[--latency <sidecar.json>] [--strict] [-o out.geojson]
 """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
 var outputPath: String?
 var latencyPath: String?
+var segmentCachePath: String?
 var strict = false
 if let flagIndex = arguments.firstIndex(of: "-o") {
     guard flagIndex + 1 < arguments.count else { fail("-o requires a path") }
@@ -48,21 +60,41 @@ if let flagIndex = arguments.firstIndex(of: "--latency") {
     latencyPath = arguments[flagIndex + 1]
     arguments.removeSubrange(flagIndex...(flagIndex + 1))
 }
+if let flagIndex = arguments.firstIndex(of: "--segments") {
+    guard flagIndex + 1 < arguments.count else { fail("--segments requires a path") }
+    segmentCachePath = arguments[flagIndex + 1]
+    arguments.removeSubrange(flagIndex...(flagIndex + 1))
+}
 if let flagIndex = arguments.firstIndex(of: "--strict") {
     strict = true
     arguments.remove(at: flagIndex)
 }
-guard arguments.count == 2 else { fail(usage) }
+// Exactly one segment source: the positional extract, or --segments. Both
+// would silently privilege one and ignore the other.
+guard arguments.count == (segmentCachePath == nil ? 2 : 1) else { fail(usage) }
 let traceURL = URL(fileURLWithPath: arguments[0])
-let extractURL = URL(fileURLWithPath: arguments[1])
+let extractURL = segmentCachePath == nil ? URL(fileURLWithPath: arguments[1]) : nil
 let outputURL = outputPath.map(URL.init(fileURLWithPath:))
     ?? traceURL.deletingLastPathComponent()
         .appendingPathComponent("cue-events.geojson")
 
 do {
     let trace = try CueEventGeoJSON.decodeTrace(Data(contentsOf: traceURL))
-    let extract = try OverpassExtract(data: Data(contentsOf: extractURL))
-    let segments = try SegmentImporter.deriveSegments(from: extract)
+    let segments: [RoadSegment]
+    if let segmentCachePath {
+        // SegmentStore.load validates the manifest's schema version and
+        // segment count, so a truncated or drifted cache fails here rather
+        // than silently exporting a partial region.
+        let cacheURL = URL(fileURLWithPath: segmentCachePath, isDirectory: true)
+        guard let (manifest, cached) = try SegmentStore.load(from: cacheURL) else {
+            fail("error: no segment cache in \(cacheURL.path) (manifest.json absent)")
+        }
+        segments = cached
+        warn("segments: \(cached.count) from cache (source sha256 \(manifest.sourceSHA256.prefix(12)))")
+    } else {
+        let extract = try OverpassExtract(data: Data(contentsOf: extractURL!))
+        segments = try SegmentImporter.deriveSegments(from: extract)
+    }
     let latency = try latencyPath.map {
         try CueEventGeoJSON.decodeLatencySidecar(
             Data(contentsOf: URL(fileURLWithPath: $0)))
