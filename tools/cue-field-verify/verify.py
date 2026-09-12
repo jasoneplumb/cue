@@ -35,7 +35,9 @@ def check_sidecar(data):
         compared += 1
         mismatch = any(step["shadow_" + f] != step["pico_" + f] for f in FIELDS)
         divergent += mismatch
-        if step.get("diverged") is not mismatch:
+        # != not `is not`: a non-Python producer may write 0/1, and
+        # 0 is not False under CPython identity even though 0 == False.
+        if step.get("diverged") != mismatch:
             raise ValueError("stored divergence flag disagrees with decision fields")
     orphans = data.get("orphan_report_count", 0)
     if type(orphans) is not int or orphans < 0:
@@ -55,8 +57,6 @@ def main():
     parser.add_argument("--expected-traces", type=int)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    # Never mix a failed new run with an older passing report.
-    args.output.mkdir(parents=True, exist_ok=False)
     report = {"status": "running", "declared_corpus_kind": args.corpus_kind,
               "generated_at": datetime.now(timezone.utc).isoformat(),
               "note": "Corpus kind is caller-declared. No physical hardware is re-tested."}
@@ -72,8 +72,12 @@ def main():
             raise RuntimeError(f"{name}: command failed with exit {proc.returncode}")
         return proc.stdout
 
-    save()
     try:
+        # Inside the try so FileExistsError (an OSError) reaches the
+        # handler, which overwrites the older report with a FAILED one —
+        # never mix a failed new run with an older passing report.
+        args.output.mkdir(parents=True, exist_ok=False)
+        save()
         traces = sorted(args.rides.glob("*-trace.json"))
         if not traces:
             report["status"] = "blocked_missing_corpus"
@@ -118,7 +122,10 @@ def main():
         if report["status"] == "running":
             report["status"] = "failed"
         report["error"] = str(error)
-        save()
+        try:
+            save()
+        except OSError:
+            pass  # no writable evidence dir; stderr and the exit code still say failed
         print(str(error), file=sys.stderr)
         return 1
     save()

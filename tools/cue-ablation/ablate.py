@@ -145,14 +145,20 @@ def decision_deltas(baseline: dict, variant: dict) -> tuple[int, int]:
     """
     changed = cue_changed = 0
     for ride, before in baseline["decision_streams"].items():
-        left = {d["t_ms"]: d for d in before}
-        right = {d["t_ms"]: d for d in variant["decision_streams"][ride]}
+        # Lists per timestamp: t_ms is monotonic, not strictly monotonic,
+        # so two decisions can share a millisecond — a plain dict would keep
+        # only the last and silently skip comparing the rest.
+        left: dict = {}
+        for d in before:
+            left.setdefault(d["t_ms"], []).append(d)
+        right: dict = {}
+        for d in variant["decision_streams"][ride]:
+            right.setdefault(d["t_ms"], []).append(d)
         for t_ms in left.keys() | right.keys():
-            a, b = left.get(t_ms), right.get(t_ms)
+            a, b = left.get(t_ms, []), right.get(t_ms, [])
             if a != b:
                 changed += 1
-                if any(d is not None and d["type"] == "HEAD_UP"
-                       for d in (a, b)):
+                if any(d["type"] == "HEAD_UP" for side in (a, b) for d in side):
                     cue_changed += 1
     return changed, cue_changed
 
