@@ -7,6 +7,7 @@
 test:
 	$(MAKE) -C kernel test
 	$(MAKE) -C replay test
+	python3 -m unittest discover -s tools/cue-ablation -p 'test_*.py'
 	$(MAKE) -C mcu test
 	$(MAKE) -C examples test
 

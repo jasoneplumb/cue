@@ -6,8 +6,21 @@ Reproduce with `python3 tools/cue-ablation/ablate.py` — paths resolve
 against the repo root, so any CWD works (2026-08-12 corpus: 23 traces,
 88.1 km, 57,783 steps, 42 recorded cues; the corpus itself is local field
 data, gitignored per NFR-005). Without it, `make demo-corpus` builds a
-synthetic corpus and `ablate.py demo-rides` runs the same sweep — the
-qualitative findings below reproduce on it.
+synthetic corpus and `ablate.py demo-rides` runs the same sweep. The
+[regenerated synthetic tables](ablation-demo-results.md) reproduce the
+timing mechanisms, but not the field cue-count increase (23 → 23 on the
+demo, versus the historical 42 → 83 field result).
+
+Verification update (2026-09-12): the sweep now invokes the normal replay
+verifier on every original trace before printing any tables. This checks
+every recorded decision's fields at its timestamp and rejects unrecorded
+HEAD_UPs; optional omitted NONE records remain allowed by the schema.
+Previously the sweep checked only aggregate HEAD_UP count, which could
+accept changed event IDs or timing. The historical field table below was
+not regenerated in this audit because the private corpus was unavailable.
+Its exact-equivalence claims require a new run with that corpus. New output
+also compares full observation-decision streams and cue timestamps against
+baseline, so equal counts are no longer presented as equal decisions.
 
 This is the replay harness used as a research instrument rather than a
 regression suite: the same `--print` evaluation that authors fixtures
@@ -23,7 +36,7 @@ re-scores the whole field corpus under a modified policy in seconds.
 | `every_zone` | `no_thresholds` **plus** the notice window blown open (0–32,767 s) | The true "cue once per approached zone" upper bound: only the speed gate, inside-event check, and FR-004 budget remain |
 | `distance_gate` | Distance window instead of time-to-event | `replay_cli` rebuilt with `-DCUE_ABLATION_DISTANCE_GATE` (kernel `#ifdef`, replay ablation builds only — `#error`-guarded out of `PICO_BUILD` firmware): cue when 30 m ≤ distance ≤ 115 m — the 5–20 s window at the corpus median cue-moment speed of 5.8 m/s |
 
-## Results
+## Historical field results (pending re-verification)
 
 | Variant | Cues | Lead s min/med/max | In 5–20 s window | Suppressions (full histogram) |
 | --- | --- | --- | --- | --- |
@@ -88,5 +101,7 @@ speed range.
   the default build is byte-identical with the flag unset.
 - `--print` evaluates without verifying, so ablated variants (which diverge
   from recorded decisions by design) run to completion; the `baseline`
-  variant doubles as the harness's own sanity check by reproducing all 42
-  recorded cues.
+  is preceded by normal verification of all original traces. The aggregate
+  cue-count check remains a secondary tripwire, not evidence of exact
+  equivalence. Run `python3 -m unittest discover -s tools/cue-ablation` for
+  the count-preserving corruption regressions (also part of `make test`).
