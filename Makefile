@@ -7,7 +7,10 @@
 test:
 	$(MAKE) -C kernel test
 	$(MAKE) -C replay test
+	python3 -m unittest discover -s tools/cue-ablation -p 'test_*.py'
 	$(MAKE) -C mcu test
+	python3 tools/cue-fault-injection/run.py
+	python3 -m unittest discover -s tools/cue-field-verify -p 'test_*.py'
 	$(MAKE) -C examples test
 
 # Synthetic, coordinate-free ride corpus under demo-rides/ (gitignored) so

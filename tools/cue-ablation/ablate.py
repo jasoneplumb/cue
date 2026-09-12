@@ -60,6 +60,22 @@ def build_distance_cli(workdir: str) -> str:
     return out
 
 
+def verify_corpus(cli: str, trace_paths: list[str]) -> bool:
+    """Verify recorded fields at their timestamps before publishing a table.
+
+    The replay verifier also rejects unrecorded HEAD_UPs. Optional omitted
+    NONE records retain the trace schema's semantics; --print is not a verifier.
+    """
+    for path in trace_paths:
+        proc = subprocess.run([cli, path], capture_output=True, text=True,
+                              cwd=ROOT)
+        if proc.returncode != 0:
+            print(f"BASELINE VERIFICATION FAILED: {path}", file=sys.stderr)
+            print(proc.stdout + proc.stderr, end="", file=sys.stderr)
+            return False
+    return True
+
+
 def variant_trace(trace: dict, variant: str) -> dict:
     t = json.loads(json.dumps(trace))  # deep copy
     if variant in ("baseline", "distance_gate"):
@@ -95,6 +111,7 @@ def run_variant(cli: str, variant: str, trace_paths: list[str],
     leads: list[int] = []
     supp: dict[str, int] = {}
     per_ride = []
+    decision_streams = {}
     for path in trace_paths:
         with open(path) as f:
             trace = json.load(f)
@@ -105,6 +122,7 @@ def run_variant(cli: str, variant: str, trace_paths: list[str],
         proc = subprocess.run([cli, "--print", tmp], capture_output=True,
                               text=True, check=True, cwd=ROOT)
         decisions = json.loads(proc.stdout)
+        decision_streams[os.path.basename(path)] = decisions
         ride_cues = 0
         for d in decisions:
             if d["type"] == "HEAD_UP":
@@ -116,7 +134,33 @@ def run_variant(cli: str, variant: str, trace_paths: list[str],
                 supp[name] = supp.get(name, 0) + 1
         per_ride.append((os.path.basename(path), ride_cues))
     return {"cues": cues, "leads": leads, "suppressed": supp,
-            "per_ride": per_ride}
+            "per_ride": per_ride, "decision_streams": decision_streams}
+
+
+def decision_deltas(baseline: dict, variant: dict) -> tuple[int, int]:
+    """Count changed observation decisions and changed cue timestamps.
+
+    Compare every emitted field, not aggregate counts. At a timestamp, a
+    removed, added, or altered HEAD_UP counts once in the cue delta.
+    """
+    changed = cue_changed = 0
+    for ride, before in baseline["decision_streams"].items():
+        # Lists per timestamp: t_ms is monotonic, not strictly monotonic,
+        # so two decisions can share a millisecond — a plain dict would keep
+        # only the last and silently skip comparing the rest.
+        left: dict = {}
+        for d in before:
+            left.setdefault(d["t_ms"], []).append(d)
+        right: dict = {}
+        for d in variant["decision_streams"][ride]:
+            right.setdefault(d["t_ms"], []).append(d)
+        for t_ms in left.keys() | right.keys():
+            a, b = left.get(t_ms, []), right.get(t_ms, [])
+            if a != b:
+                changed += 1
+                if any(d["type"] == "HEAD_UP" for side in (a, b) for d in side):
+                    cue_changed += 1
+    return changed, cue_changed
 
 
 def main() -> int:
@@ -128,6 +172,8 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as workdir:
         cli = build_baseline_cli()
+        if not verify_corpus(cli, trace_paths):
+            return 1
         cli_distance = build_distance_cli(workdir)
 
         variants = [
@@ -141,9 +187,8 @@ def main() -> int:
         for name, binary in variants:
             results[name] = run_variant(binary, name, trace_paths, workdir)
 
-        # Sanity: baseline must reproduce every recorded HEAD_UP exactly —
-        # same kernel, same config, so anything else means this harness
-        # rewrote something it shouldn't have.
+        # Secondary count tripwire for the rewritten --print path. Exact
+        # recorded-decision verification already ran above on every trace.
         recorded = 0
         for path in trace_paths:
             with open(path) as f:
@@ -157,7 +202,8 @@ def main() -> int:
             return 1
 
         print(f"corpus: {len(trace_paths)} traces, "
-              f"{recorded} recorded HEAD_UP cues (baseline reproduces them)")
+              f"{recorded} recorded HEAD_UP cues "
+              "(baseline verified against all recorded decisions)")
         print()
         print("| Variant | Cues | Lead s min/med/max | In 5–20 s window | Top suppressions |")
         print("| --- | --- | --- | --- | --- |")
@@ -175,6 +221,12 @@ def main() -> int:
             top = sorted(r["suppressed"].items(), key=lambda kv: -kv[1])[:3]
             tops = ", ".join(f"{k} {v:,}" for k, v in top)
             print(f"| {name} | {r['cues']} | {lead} | {window} | {tops} |")
+        print()
+        print("| Variant | Changed observation decisions | Changed cue timestamps |")
+        print("| --- | --- | --- |")
+        for name, _ in variants:
+            changed, cue_changed = decision_deltas(results["baseline"], results[name])
+            print(f"| {name} | {changed} | {cue_changed} |")
         print()
         print("full suppression histograms:")
         for name, _ in variants:
