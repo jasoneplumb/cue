@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.15.0-alpha — 2026-09-12
+
+A custom zone drawn over an untagged road now does what the overlay was
+built for. The scorer's meaningful-absence gate rejected exactly the roads
+riders draw zones on — sparsely tagged classes where OSM silence means
+nothing — so a drawn zone was inert everywhere it mattered. The rider's
+assertion now substitutes for the missing coverage evidence, and narrowly:
+it never contradicts present tags, and the class, lane, and speed gates
+still hold. RFC 0009 records the decision, the confidence ordering, and
+the NFR-001 trade-off. The desk exporter also says, per zone and segment,
+WHY an inert zone is inert.
+
+Alongside it, the ablation evidence grew teeth: recorded decisions are
+verified before tables publish, and a host fault-injection campaign
+documents where the shadow comparison can and cannot catch drift.
+
+### Added
+
+- Rider-drawn custom zones satisfy the meaningful-absence gate on
+  untagged, sparsely tagged roads; RFC 0009 records why personal assertion
+  substitutes for coverage evidence and what confidence it earns (#39)
+- Per-zone, per-segment inertness diagnostics in `cue-zone-export`: each
+  drawn zone reports "scores" or "INERT — why", so a rider can tell a
+  broken zone from a deliberate exclusion (#39)
+- `--segments <cache-dir>` on `cue-zone-export` and `cue-events-export`
+  reads a phone's region cache in place of an Overpass extract — no
+  Overpass round-trip, no bbox disclosure, and segment ids from the exact
+  region the ride ran against (#39)
+- Field-corpus verifier (`tools/cue-field-verify`) and a ten-scenario host
+  fault-injection campaign, with committed aggregate evidence; all 23
+  private traces pass — 57,783 samples, 88.1 km, 42 cues (#42)
+- Invariant tests: score ↔ rejectionReason parity across every gate
+  combination, the RFC 0009 confidence identity and ordering, and the
+  store → scorer custom-zone bridge end to end (#39)
+
+### Fixed
+
+- Ablation decision diffing compares every decision sharing a millisecond
+  instead of silently keeping only the last; the verifier fails closed
+  when its output directory already exists and accepts integer-typed
+  booleans from non-Python producers (#42)
+- Custom-zone import error lifecycle: a stale error banner cannot survive
+  a clean import, a save failure cannot be masked by zone notes, and
+  import with no region loaded is refused instead of promoting an empty
+  app to ready (#39)
+
+### Changed
+
+- `cue-zone-export` default output lands beside a `--segments` cache
+  directory, never inside it (#39)
+- CI review workflow: claude-code-action 1.0.202 → 1.0.217 (#41)
+
 ## 0.14.0-alpha — 2026-08-31
 
 A rider can now say "this squeeze only matters going this way." Custom
