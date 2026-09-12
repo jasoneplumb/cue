@@ -53,10 +53,11 @@ guard arguments.count == (segmentCachePath == nil ? 1 : 0) else {
            cue-zone-export --segments <cache-dir> [-o out.geojson] [--custom-zones <zones.geojson>]
     """)
 }
-// Default output sits beside whichever input was given.
+// Default output sits beside whichever input was given — beside the cache
+// DIRECTORY too, never inside it, where it would contaminate the cache.
 let inputURL = URL(fileURLWithPath: segmentCachePath ?? arguments[0])
 let outputURL = outputPath.map(URL.init(fileURLWithPath:))
-    ?? (segmentCachePath == nil ? inputURL.deletingLastPathComponent() : inputURL)
+    ?? inputURL.deletingLastPathComponent()
         .appendingPathComponent("squeeze-zones.geojson")
 
 do {

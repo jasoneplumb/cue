@@ -208,12 +208,18 @@ final class RideSessionController: NSObject, ObservableObject {
         // unioned per segment across every zone in the file, so processing
         // order cannot decide the outcome (cue#30).
         personalMemoryStore.replaceUnsafeZones(directionsBySegment: result.directionsBySegment)
+        // A stale banner from an earlier operation must not survive this
+        // import (persistPersonalMemory only ever SETS lastError), and a
+        // save failure from THIS import must survive whatever notes follow:
+        // reset, persist, then fold any failure into the notes.
+        lastError = nil
         persistPersonalMemory()
         // Re-score: the zones just imported (or just cleared) change which
         // segments qualify (#38). Without this the new assertions would not
         // take effect until the next region import.
         adopt(segments: segments)
         var notes: [String] = []
+        if let saveError = lastError { notes.append(saveError) }
         if !result.unmatchedZoneIDs.isEmpty {
             notes.append("\(result.unmatchedZoneIDs.count) custom zone(s) had no nearby "
                 + "road segment and were skipped")
@@ -223,10 +229,7 @@ final class RideSessionController: NSObject, ObservableObject {
             notes.append("personal memory store is full — \(evictedByThisImport) older "
                 + "remembered segment\(evictedByThisImport == 1 ? "" : "s") forgotten to make room")
         }
-        // persistPersonalMemory() above may have set lastError; a clean
-        // import (no notes) must not overwrite a save failure with nil.
-        let saveError = lastError
-        lastError = notes.isEmpty ? saveError : notes.joined(separator: "; ")
+        lastError = notes.isEmpty ? nil : notes.joined(separator: "; ")
     }
 
     private func adopt(segments imported: [RoadSegment]) {
