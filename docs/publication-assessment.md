@@ -70,6 +70,11 @@ predict how a rider would change speed after receiving a different warning.
 
 ## Minimum publishable next evidence
 
+Update: [host fault-injection evidence](fault-injection.md) now records ten
+directed scenarios, including same-size kernel drift and incomplete-coverage
+blind spots. This strengthens the characterization of the contract's limits.
+The field corpus remains unavailable; its re-verification is still pending.
+
 1. Re-run the fixed script on the private field corpus and release a privacy-reviewed
    replay dataset with trace, kernel, configuration and firmware provenance.
 2. Inject transport loss, duplicate reports, reset and same-size firmware mismatch;
