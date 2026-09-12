@@ -96,8 +96,8 @@ do {
         // and the summary counts alone cannot tell them apart (#38).
         let coverage = SqueezeScorer.ridingSpaceTagCoverage(byClass: segments)
         let byID = Dictionary(segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for zoneID in match.matches.keys.sorted() {
-            for segmentID in (match.matches[zoneID] ?? [:]).keys.sorted() {
+        for (zoneID, segmentMatches) in match.matches.sorted(by: { $0.key < $1.key }) {
+            for segmentID in segmentMatches.keys.sorted() {
                 guard let segment = byID[segmentID] else { continue }
                 let why = SqueezeScorer.rejectionReason(segment, coverage: coverage,
                                                         riderAsserted: true)

@@ -173,11 +173,16 @@ public enum SqueezeScorer {
         guard mph >= minSqueezeMph else {
             return "maxspeed=\(mph) mph is below the \(minSqueezeMph) mph floor"
         }
+        // One explicit arm per case, mirroring score's exhaustive switch:
+        // a future RidingSpace case must fail compilation here too, not be
+        // silently absorbed into a lying "scores" diagnostic.
         switch attrs.ridingSpace {
         case .dedicatedSpace:
             return "tagged with dedicated riding space — not a squeeze"
-        case .explicitNone, .untagged:
-            if attrs.ridingSpace == .untagged, !riderAsserted,
+        case .explicitNone:
+            return nil
+        case .untagged:
+            if !riderAsserted,
                coverage[attrs.highway, default: 0] < meaningfulAbsenceCoverage {
                 return "untagged riding space on a class tagged "
                     + String(format: "%.0f%%", coverage[attrs.highway, default: 0] * 100)

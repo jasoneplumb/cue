@@ -243,4 +243,47 @@ final class SqueezeScorerTests: XCTestCase {
                                                       coverage: coverage, riderAsserted: false),
                         "without the assertion the absence gate still rejects it")
     }
+
+    /// rejectionReason duplicates score's gates by construction; this grid
+    /// keeps them from drifting. Every combination must either score with no
+    /// reason, or not score with a reason — a gate added to one and not the
+    /// other fails here instead of shipping a lying diagnostic.
+    func testRejectionReasonAgreesWithScoreEverywhere() {
+        var id: UInt32 = 1
+        for highway in ["secondary", "tertiary", "residential", "trunk"] {
+            for lanes in [nil, 2, 3] as [Int?] {
+                for mph in [nil, 35, 45] as [Int?] {
+                    for tags in [[:], ["cycleway": "no"],
+                                 ["cycleway": "lane"]] as [[String: String]] {
+                        for asserted in [false, true] {
+                            for classCoverage in [0.0, 0.5] {
+                                let s = segment(id: id, nodes: [Int64(id), Int64(id) + 1],
+                                                highway: highway, lanes: lanes, mph: mph,
+                                                ridingSpace: tags)
+                                id += 2
+                                let coverage = [highway: classCoverage]
+                                let scored = SqueezeScorer.score(
+                                    s, coverage: coverage, riderAsserted: asserted)
+                                let why = SqueezeScorer.rejectionReason(
+                                    s, coverage: coverage, riderAsserted: asserted)
+                                let context = "\(s.attributes), asserted=\(asserted), coverage=\(classCoverage)"
+                                XCTAssertEqual(scored == nil, why != nil,
+                                               "score and rejectionReason disagree: \(context)")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// RFC 0009 D2: the drawing substitutes for coverage evidence, it does
+    /// not become a survey. The identity and the ordering are the contract;
+    /// a calibration pass that reassigns an independent literal fails here.
+    func testRiderAssertedConfidenceEqualsMeaningfulAbsenceAndStaysBelowExplicit() {
+        XCTAssertEqual(SqueezeScorer.confidenceRiderAsserted,
+                       SqueezeScorer.confidenceMeaningfulAbsence)
+        XCTAssertLessThan(SqueezeScorer.confidenceMeaningfulAbsence,
+                          SqueezeScorer.confidenceExplicit)
+    }
 }

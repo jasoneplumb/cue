@@ -165,6 +165,14 @@ final class RideSessionController: NSObject, ObservableObject {
     /// same export is harmless — D2's derivation is a marker_count > 0
     /// check, not graduated, so a repeat import cannot change the outcome.
     func importCustomZones(from url: URL) {
+        // Zones snap to the region's segments, so a region must already be
+        // imported — and adopt() below must never promote .noRegion to
+        // .ready with zero segments (the UI's .disabled gate is not the
+        // only conceivable caller).
+        guard state != .noRegion else {
+            lastError = "import a region first — custom zones snap to its segments"
+            return
+        }
         // Reading the file, parsing GeoJSON, and matchSegments (O(vertices
         // x segment-edges), brute-force, acceptable at region scale but
         // plausibly hundreds of ms for a large region or dense zone file)
