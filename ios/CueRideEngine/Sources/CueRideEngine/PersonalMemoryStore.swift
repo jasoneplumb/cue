@@ -197,7 +197,7 @@ public final class PersonalMemoryStore {
     /// riding space, so it does not qualify a segment for scoring.
     public var zoneAssertedSegmentIDs: Set<UInt32> {
         lock.lock(); defer { lock.unlock() }
-        return Set(recordsBySegment.lazy.filter { $0.value.unsafeDirMask != 0 }.map(\.key))
+        return Set(recordsBySegment.compactMap { $0.value.unsafeDirMask != 0 ? $0.key : nil })
     }
 
     public init() {}

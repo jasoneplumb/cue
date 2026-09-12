@@ -60,7 +60,9 @@ public enum SqueezeScorer {
     /// over it (#38). Same confidence as a well-covered absence, not the
     /// higher explicit-tag value: the rider's drawing substitutes for the
     /// coverage evidence that is missing, it does not become a survey.
-    static let confidenceRiderAsserted: UInt8 = 165
+    /// Defined AS that constant so a §13 calibration pass cannot move one
+    /// without the other and silently reverse the ordering.
+    static let confidenceRiderAsserted: UInt8 = confidenceMeaningfulAbsence
 
     /// All three §7 evidence bits — the qualification rule is their
     /// conjunction, so every zone carries the full mask. Values come from

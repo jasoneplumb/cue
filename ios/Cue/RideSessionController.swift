@@ -223,7 +223,10 @@ final class RideSessionController: NSObject, ObservableObject {
             notes.append("personal memory store is full — \(evictedByThisImport) older "
                 + "remembered segment\(evictedByThisImport == 1 ? "" : "s") forgotten to make room")
         }
-        lastError = notes.isEmpty ? nil : notes.joined(separator: "; ")
+        // persistPersonalMemory() above may have set lastError; a clean
+        // import (no notes) must not overwrite a save failure with nil.
+        let saveError = lastError
+        lastError = notes.isEmpty ? saveError : notes.joined(separator: "; ")
     }
 
     private func adopt(segments imported: [RoadSegment]) {
