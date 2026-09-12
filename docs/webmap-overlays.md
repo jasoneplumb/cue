@@ -26,6 +26,12 @@ Both exporters take the same input the app's "Import region…" picker does:
 an Overpass `out geom;` JSON response for your riding area's bounding box
 (south, west, north, east):
 
+> If the region is already imported on a phone, both exporters take
+> `--segments <cache-dir>` and read that cache directly, so you can skip
+> this section — see §4 for pulling the cache off the phone. The extract
+> is still needed for a region no phone has imported, and for
+> `cue-custom-zone-merge`, which has no `--segments` yet.
+
 ```bash
 QUERY='[out:json][timeout:60];
 way["highway"~"^(primary|secondary|tertiary|residential|unclassified|trunk|primary_link|secondary_link|tertiary_link|living_street)$"](SOUTH,WEST,NORTH,EAST);
@@ -47,9 +53,12 @@ Export the scored zones through the same importer/scorer the app runs:
 
 ```bash
 swift run cue-zone-export region.json -o squeeze-zones.geojson
+# or, from a phone's region cache (§4) instead of an extract:
+swift run cue-zone-export --segments rides/region-cache -o squeeze-zones.geojson
 ```
 
-The summary line reports ways → segments → zones. Then, on webmap.dev:
+The summary line reports ways → segments → zones (the ways stage is omitted
+under `--segments`: the cache stores derived segments and never saw the ways). Then, on webmap.dev:
 
 1. Open the **layers control** and toggle **Squeeze zones** on.
 2. The overlay prompts with a **file picker** — choose
@@ -72,6 +81,25 @@ Unlike the overlay above, this one has no exporter — it's authored
 entirely in webmap.dev, for stretches you know are a squeeze but the OSM
 importer/scorer didn't flag (no tags to key off, or the road hasn't been
 mapped in enough detail).
+
+> **What a drawn zone can and cannot rescue** (#38). Drawing a zone lets
+> its segments satisfy the scorer's *meaningful absence* rule — the one
+> that otherwise refuses to read "no `cycleway` tag" as "no bike lane" on
+> a class nobody tags either way. Your judgment stands in for the survey
+> that is missing. It does **not** override evidence that is present (a
+> road tagged with a real bike lane stays unscored), and it does not touch
+> the class, lane-count or speed gates: a zone on a residential street, or
+> on an arterial with no `lanes` tag, still scores nothing.
+>
+> Check before you ride, rather than discovering it on the road:
+>
+> ```bash
+> swift run cue-zone-export region.json --custom-zones custom-squeeze-zones.geojson
+> ```
+>
+> It reports how many segments your zones assert and how many zones the
+> region then scores. `0 zones` means the drawn zones have nothing to
+> attach to and will stay silent whichever way you ride.
 
 1. Click the **Draw zone** map control (topleft, pencil icon).
 2. Click points on the map to trace the zone; **Finish** (button or
@@ -154,8 +182,29 @@ swift run cue-events-export ride-trace.json region.json \
   --latency ride-latency.json -o cue-events.geojson
 ```
 
-- `ride-trace.json` — the schema-v1 policy trace
+Or, skipping the Overpass round-trip entirely, from the phone's own
+region cache:
+
+```bash
+xcrun devicectl device copy from --device <UDID> \
+  --domain-type appDataContainer --domain-identifier com.jasoneplumb.cue \
+  --user mobile --source "Library/Application Support/region-cache/<file>" \
+  --destination "rides/region-cache/<file>"   # manifest.json and segments.json
+
+swift run cue-events-export ride-trace.json --segments rides/region-cache \
+  -o cue-events.geojson
+```
+
+- `ride-trace.json` — the policy trace, schema v1 or v2
   (`replay/replay_trace.schema.json`).
+- `--segments <cache-dir>` — the `manifest.json` + `segments.json` pair
+  `SegmentStore` writes, in place of the positional extract (the two are
+  mutually exclusive). `SegmentStore.load` validates the manifest's schema
+  version and segment count first, so a truncated cache fails loudly rather
+  than exporting a partial region. Two advantages over the extract path: no
+  bbox goes to the public Overpass endpoint, and the segment ids come from
+  the exact region the ride ran against — so the stale-id skip below cannot
+  fire. The phone keeps only this cache, not the extract it was built from.
 - `--latency` — optional sidecar from the dispatcher's latency log; without
   it the `delivered` / `latency_ms` fields are simply omitted.
 - The policy trace carries **no GPS** by default, so each event renders at

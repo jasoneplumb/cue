@@ -39,6 +39,32 @@ final class PersonalMemoryIntegrationTests: XCTestCase {
         return (segments, zones)
     }
 
+    /// The #38 bridge end to end, minus the UI: a drawn zone lands in the
+    /// store (replaceUnsafeZones), the store exposes it
+    /// (zoneAssertedSegmentIDs), and the scorer qualifies segments the
+    /// region's tagging alone could not. A regression anywhere along that
+    /// path leaves rider-drawn zones silently inert on device, which no
+    /// set-literal scorer test can catch.
+    func testADrawnZoneQualifiesItsSegmentsThroughStoreAndScorer() throws {
+        let untaggedWay = OverpassWay(
+            id: 400, tags: ["highway": "secondary", "lanes": "2", "maxspeed": "45 mph"],
+            nodes: [40, 41, 42],
+            geometry: (0...2).map { OverpassCoordinate(lat: 0.01, lon: Double($0) * 0.001) })
+        let segments = try SegmentImporter.deriveSegments(
+            from: OverpassExtract(ways: [untaggedWay]))
+        XCTAssertFalse(segments.isEmpty)
+        XCTAssertTrue(SqueezeScorer.scoreZones(from: segments).isEmpty,
+                      "untagged on a 0%-covered class must not score on its own")
+
+        let store = PersonalMemoryStore()
+        store.replaceUnsafeZones(directionsBySegment: Dictionary(
+            uniqueKeysWithValues: segments.map { ($0.id, ZoneDirectionMask.both) }))
+        let zones = SqueezeScorer.scoreZones(
+            from: segments, riderAsserted: store.zoneAssertedSegmentIDs)
+        XCTAssertEqual(Set(zones.flatMap(\.segmentIDs)), Set(segments.map(\.id)),
+                       "the store-asserted segments must now score")
+    }
+
     /// Eastbound at 6 m/s, 1 Hz, ~2.2 m north of the centerline — the same
     /// approach -> squeeze ride ReviewRecordingTests proves cues exactly
     /// once with no memory in play.

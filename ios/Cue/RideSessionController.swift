@@ -165,6 +165,14 @@ final class RideSessionController: NSObject, ObservableObject {
     /// same export is harmless — D2's derivation is a marker_count > 0
     /// check, not graduated, so a repeat import cannot change the outcome.
     func importCustomZones(from url: URL) {
+        // Zones snap to the region's segments, so a region must already be
+        // imported — and adopt() below must never promote .noRegion to
+        // .ready with zero segments (the UI's .disabled gate is not the
+        // only conceivable caller).
+        guard state != .noRegion else {
+            lastError = "import a region first — custom zones snap to its segments"
+            return
+        }
         // Reading the file, parsing GeoJSON, and matchSegments (O(vertices
         // x segment-edges), brute-force, acceptable at region scale but
         // plausibly hundreds of ms for a large region or dense zone file)
@@ -208,8 +216,18 @@ final class RideSessionController: NSObject, ObservableObject {
         // unioned per segment across every zone in the file, so processing
         // order cannot decide the outcome (cue#30).
         personalMemoryStore.replaceUnsafeZones(directionsBySegment: result.directionsBySegment)
+        // A stale banner from an earlier operation must not survive this
+        // import (persistPersonalMemory only ever SETS lastError), and a
+        // save failure from THIS import must survive whatever notes follow:
+        // reset, persist, then fold any failure into the notes.
+        lastError = nil
         persistPersonalMemory()
+        // Re-score: the zones just imported (or just cleared) change which
+        // segments qualify (#38). Without this the new assertions would not
+        // take effect until the next region import.
+        adopt(segments: segments)
         var notes: [String] = []
+        if let saveError = lastError { notes.append(saveError) }
         if !result.unmatchedZoneIDs.isEmpty {
             notes.append("\(result.unmatchedZoneIDs.count) custom zone(s) had no nearby "
                 + "road segment and were skipped")
@@ -224,7 +242,12 @@ final class RideSessionController: NSObject, ObservableObject {
 
     private func adopt(segments imported: [RoadSegment]) {
         segments = imported
-        zones = SqueezeScorer.scoreZones(from: imported)
+        // Rider-drawn zones qualify their segments for scoring where the
+        // region's tagging cannot (#38), so scoring has to see them — and has
+        // to re-run when they change, which is why importing custom zones
+        // calls back through here.
+        zones = SqueezeScorer.scoreZones(
+            from: imported, riderAsserted: personalMemoryStore.zoneAssertedSegmentIDs)
         segmentCount = imported.count
         zoneCount = zones.count
         // Never yank an active ride OR an un-exported review to .ready —

@@ -438,6 +438,30 @@ final class PersonalMemoryStoreTests: XCTestCase {
         XCTAssertEqual(store.lastEvictedSegmentID, 2, "segment 2 is now the least-recently-touched")
     }
 
+    // MARK: - Scorer bridge (#38)
+
+    /// `zoneAssertedSegmentIDs` is the sole bridge from the store to the
+    /// scorer, and its `unsafeDirMask != 0` filter is the invariant that
+    /// keeps in-ride tap records out of zone scoring. Exercised through the
+    /// store — not with set literals, as the scorer's own tests do — so a
+    /// wrong field or a serialisation mismatch fails here instead of leaving
+    /// the #38 feature silently inert on device.
+    func testZoneAssertedSegmentIDsExposesZonesButNeverTaps() throws {
+        let store = PersonalMemoryStore()
+        store.recordUnsafeZone(segmentID: 7, directions: .forward)
+        store.recordUnsafeMarker(segmentID: 8)  // a tap claims nothing about riding space
+        store.recordReview(segmentID: 9, outcome: .falseAlarm)
+        XCTAssertEqual(store.zoneAssertedSegmentIDs, [7])
+
+        // The assertion must survive a save/load round trip, or every drawn
+        // zone stops qualifying its segments on the next launch.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("personal-memory-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try store.save(to: directory)
+        XCTAssertEqual(PersonalMemoryStore.load(from: directory).zoneAssertedSegmentIDs, [7])
+    }
+
     // MARK: - Persistence round trip
 
     func testSaveAndLoadRoundTrip() throws {
