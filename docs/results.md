@@ -15,20 +15,25 @@ cueing (NFR-001), and the same ethos applies to reporting.
 
 Corpus snapshot: rides of 2026-07-20 through 2026-08-08.
 
+Re-verified 2026-09-12: [23/23 traces and regenerated aggregate evidence](field-reverification.md).
+Raw GPS exports remain private.
+
 ## The equivalence contract
 
 The same `kernel/cue_policy.c` runs in three places — live on the phone, as
 the MCU actuator (Pico W, RFC 0006), and offline in the replay harness — and
-the contract is that all three agree, bit for bit, on every decision.
+the contract is that all three agree on the recorded logical decision fields.
+Shared code can also share defects.
 
 | Contract check | Result |
 | --- | --- |
 | Offline replay of every corpus ride trace (`replay_cli`, NFR-003) | **23/23 traces exit 0** — every recorded decision reproduced exactly |
 | Phone ↔ Pico shadow comparison, per-step, live during rides (RFC 0006 D5) | **11,301 steps logged, 11,300 compared, 0 divergences, 0 orphan reports** across 8 instrumented rides |
-| Pico state-size tripwire (SESSION_ACK `state_size` vs. `static_assert`) | Enforced at session start on every instrumented ride |
+| Pico state-size tripwire (SESSION_ACK `state_size` vs. `static_assert`) | Implemented session-start guard; same-size behavioral drift can pass it |
 
-The one logged-but-uncompared step is a tail record the ride ended on before
-its report round-tripped; it is visible in the sidecar, not hidden here.
+The one logged-but-uncompared step is a tail record with no recorded report.
+Its tail position is confirmed; the cause of the
+missing report is not independently established by this re-verification.
 
 ## Corpus
 
@@ -52,20 +57,20 @@ its report round-tripped; it is visible in the sidecar, not hidden here.
 
 ## Delivery (the honest negatives live here)
 
-Delivery is where the prototype loses cues — not the policy. Two delivery
-paths exist: the watch haptic (Phase 1) and the Pico buzzer (RFC 0006, the
-five most recent instrumented rides).
+The exports expose incomplete delivery coverage across watch haptics and
+the Pico buzzer. Replay agreement cannot rule out policy defects or prove
+that output reached the rider.
 
 | Metric | Value |
 | --- | --- |
 | Watch dispatches | 49 |
-| Delivered live to the wrist | 27 (median latency **542 ms**, min 25, max 2,890; n=27) |
-| Queued, never delivered | **22** — the watch path's real-world failure rate, unhidden |
+| Marked delivered live by watch telemetry | 27 (median latency **542 ms**, min 25, max 2,890; n=27) |
+| Queued without recorded live delivery | **22** of 49 dispatches; not a general failure-rate estimate |
 | Of the 27 delivered: watch verdict `play` | 18 (4 `duplicate`, 5 pre-verdict schema) |
-| Pico buzzer actuations | 15/15 trace cues on Pico rides actuated |
-| Buzzer actuation delay (decision → GPIO) | 138–173 µs (median 147 µs, n=13; 2 early records at ms resolution) |
+| Pico reported actuations | 15 records marked actuated |
+| Reported buzzer actuation delay (decision → GPIO) | 138–173 µs (median 147 µs, n=13; 2 early records at ms resolution) |
 
-The `unrecognized` grades above and the queued dispatches here are the same
-story from two vantage points: when a cue fails, it fails in delivery, not in
-the decision — which is exactly what the equivalence contract is designed to
-make provable.
+The `unrecognized` grades and queued dispatches concern different observation
+boundaries. Their aggregate counts do not establish a cue-by-cue causal link.
+Transport acknowledgements, play verdicts and actuation flags do not independently
+prove physical output or perception. The 49 dispatches are not 49 unique kernel cues.

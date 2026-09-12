@@ -9,16 +9,16 @@ data, gitignored per NFR-005). Without it, `make demo-corpus` builds a
 synthetic corpus and `ablate.py demo-rides` runs the same sweep. The
 [regenerated synthetic tables](ablation-demo-results.md) reproduce the
 timing mechanisms, but not the field cue-count increase (23 → 23 on the
-demo, versus the historical 42 → 83 field result).
+demo, versus the re-verified 42 → 83 field result).
 
 Verification update (2026-09-12): the sweep now invokes the normal replay
 verifier on every original trace before printing any tables. This checks
 every recorded decision's fields at its timestamp and rejects unrecorded
 HEAD_UPs; optional omitted NONE records remain allowed by the schema.
 Previously the sweep checked only aggregate HEAD_UP count, which could
-accept changed event IDs or timing. The historical field table below was
-not regenerated in this audit because the private corpus was unavailable.
-Its exact-equivalence claims require a new run with that corpus. New output
+accept changed event IDs or timing. The uploaded private corpus now passes
+23/23 trace verifications, and the field tables below have been regenerated
+([aggregate evidence](field-reverification.md)). New output
 also compares full observation-decision streams and cue timestamps against
 baseline, so equal counts are no longer presented as equal decisions.
 
@@ -36,7 +36,7 @@ re-scores the whole field corpus under a modified policy in seconds.
 | `every_zone` | `no_thresholds` **plus** the notice window blown open (0–32,767 s) | The true "cue once per approached zone" upper bound: only the speed gate, inside-event check, and FR-004 budget remain |
 | `distance_gate` | Distance window instead of time-to-event | `replay_cli` rebuilt with `-DCUE_ABLATION_DISTANCE_GATE` (kernel `#ifdef`, replay ablation builds only — `#error`-guarded out of `PICO_BUILD` firmware): cue when 30 m ≤ distance ≤ 115 m — the 5–20 s window at the corpus median cue-moment speed of 5.8 m/s |
 
-## Historical field results (pending re-verification)
+## Re-verified field results (2026-09-12)
 
 | Variant | Cues | Lead s min/med/max | In 5–20 s window | Suppressions (full histogram) |
 | --- | --- | --- | --- | --- |
@@ -46,10 +46,20 @@ re-scores the whole field corpus under a modified policy in seconds.
 | `every_zone` | **83** | 34 / 226 / 1,748 | **0/83** | TOO_SLOW 21,196 · ALREADY_CUED 7,589 · INSIDE_EVENT 1,899 · TOO_LATE 24 |
 | `distance_gate` | 41 | 6 / 19 / 73 | **24/41** | TOO_SLOW 21,196 · TOO_EARLY 6,488 · INSIDE_EVENT 1,906 · ALREADY_CUED 763 · TOO_LATE 397 |
 
+## Full decision differences
+
+| Variant | Changed observation decisions | Changed cue timestamps |
+| --- | --- | --- |
+| baseline | 0 | 0 |
+| no_memory | 16 | 0 |
+| no_thresholds | 0 | 0 |
+| every_zone | 7114 | 125 |
+| distance_gate | 820 | 83 |
+
 ## Findings
 
-**1a. The kernel's threshold and cooldown gates have never bound in the
-field.** `no_thresholds` is decision-identical to baseline: across 57,783
+**1a. The kernel's threshold and cooldown gates do not bind in this
+corpus.** `no_thresholds` is decision-identical to baseline: across 57,783
 field steps, not one suppression came from severity, confidence, or either
 cooldown. The reason is upstream: every one of the corpus's 37,349
 observations arrives with severity ≥ 128 and confidence ≥ 128 — the phone's
@@ -69,18 +79,18 @@ cue again. On this corpus, essentially all of NFR-001's noise control that
 the kernel itself provides lives in the notice window plus the speed gate
 (TOO_SLOW 21,196).
 
-**2. Personal route memory has not yet changed a single field decision.**
+**2. Personal route memory changes reasons, but no cue timestamps.**
 `no_memory` produces the same 42 cues. The corpus carries 239 memory
 records — 83 UNSAFE, 29 with a +2 s notice bonus — but UNSAFE only bypasses
-a severity gate that never binds (finding 1), and a 5 → 7 s minimum-notice
-widening cannot bind when the corpus's shortest lead is 12 s. The histogram
-shows the mechanism working exactly as specified and mattering exactly zero:
+a severity gate that never binds (finding 1). The 5 → 7 s minimum-notice
+change does not alter emitted cues, whose shortest lead is 12 s. The histogram
+shows 16 changed decisions, all confined to reason codes:
 16 steps shift between TOO_LATE and ALREADY_CUED, and no cue moves. The
 lever is armed but has not yet been reached by field conditions.
 
 **3. Speed normalization is what the time window buys — a distance window
 demonstrably fails this corpus.** Cue-moment speeds span 0.9–17.1 m/s
-(3.3–61 km/h). A 30–115 m window — calibrated to be *exactly equivalent* to
+(3.3–61 km/h). A 30–115 m window — calibrated to approximate
 5–20 s at the median cue speed — keeps only **24 of 41** cues inside the
 notice window the spec asks for, fires one cue at a 73 s lead (a slow
 approach at long distance), and drops one recorded cue outright. Same

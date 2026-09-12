@@ -79,10 +79,10 @@ and field fault incidence still require separate evidence.
 
 ## Field corpus status and verification command
 
-The original 23-trace corpus was unavailable in the checkout. Searches for
-uploaded ride/trace files and inspection of the accessible archive's trace
-directory found no field corpus. Running the verifier against `rides/` returned
-`blocked_missing_corpus`; no historical field figure was re-verified.
+The initial missing-corpus run returned `blocked_missing_corpus`. The user
+subsequently supplied private exports: [field re-verification](field-reverification.md)
+now passes all 23 traces and regenerates the tables. Raw GPS data and per-ride
+logs remain outside the repository.
 
 On the machine holding the original exports, use a new output directory:
 
@@ -108,4 +108,4 @@ keep this output private until reviewed. Raw trace data is not published.
 The command was exercised successfully on the six synthetic demo traces, and
 regression tests cover missing input, inconsistent sidecar counters, hidden
 decision mismatches, partial reports and duplicate sequences. Those tests do
-not substitute for the pending field run.
+not substitute for the separately completed field run.

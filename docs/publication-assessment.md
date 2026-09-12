@@ -1,7 +1,7 @@
 # Publication assessment after exact ablation verification
 
 Assessment date: 2026-09-12. Code base: `66702ed`, plus the verification fix
-and regenerated synthetic results in this change.
+and the subsequent fault campaign and private field re-verification.
 
 ## Verdict
 
@@ -9,8 +9,9 @@ Cue remains a plausible engineering experience report or research demonstrator.
 The defensible contribution is field-checkable execution consistency and
 measurement of policy/delivery boundaries. A new cycling-warning concept,
 improved rider safety, and effective personalization are not established.
-The corrected tool strengthens the evidence process; it does not validate the
-historical private field results retroactively.
+The corrected verifier now reproduces all 23 private field traces and the
+historical aggregate tables. This supports recorded execution consistency;
+it does not independently validate policy correctness or rider benefit.
 
 ## Closely related study and source limits
 
@@ -73,13 +74,18 @@ predict how a rider would change speed after receiving a different warning.
 Update: [host fault-injection evidence](fault-injection.md) now records ten
 directed scenarios, including same-size kernel drift and incomplete-coverage
 blind spots. This strengthens the characterization of the contract's limits.
-The field corpus remains unavailable; its re-verification is still pending.
+[Field re-verification](field-reverification.md) now passes all 23 traces.
+There are 11,300 matching Pico comparisons and one uncompared tail step.
+Memory removal changes 16 reason codes but no cues; threshold/cooldown removal
+changes no decisions. The field every-zone variant nearly doubles cues (42 → 83),
+while the distance gate places 17/41 outside the calculated notice window.
 
-1. Re-run the fixed script on the private field corpus and release a privacy-reviewed
-   replay dataset with trace, kernel, configuration and firmware provenance.
-2. Inject transport loss, duplicate reports, reset and same-size firmware mismatch;
-   measure detection coverage, latency, and recovery. The current comparison is
-   after actuation, not an actuation veto or proof of policy correctness.
+1. Field re-verification is complete. Keep GPS exports private; provide a separate
+   coordinate-free reproducer and strengthen kernel/configuration/firmware provenance
+   for public replication. Aggregate publication alone does not enable field replay.
+2. Extend the completed host faults to physical transport and the Swift receiver;
+   measure report loss/duplication, reset recovery and detection latency on target.
+   The current comparison is after actuation, not an actuation veto or proof of policy correctness.
 3. Measure physical output and actual zone entry independently, keeping attempted,
    delivered, perceived and behavior-changing cues as separate denominators.
 4. Use held-out rides for policy evaluation. If claiming rider benefit, add multiple

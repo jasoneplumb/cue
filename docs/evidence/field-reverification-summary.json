@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "private_field_corpus_reverification_aggregate",
+  "verified_at": "2026-09-12T05:37:21.719431+00:00",
+  "status": "replay_verified",
+  "declared_corpus_kind": "field",
+  "source_git_tree": "2bad631372fec1ed085e8edc96c5144733b30743",
+  "equivalent_remote_revision": "dd8a7db25522734de1dbec614f66113c69d80dcb",
+  "source_sha256": {
+    "tools/cue-field-verify/verify.py": "3ea6cfb4faa3618db1ec081ac18a2a0e20aaa8773bf242b85f52964e10ac6d89",
+    "tools/cue-ablation/ablate.py": "1e00b83a4053b6a256b408ad7cd10a98aa189f9a3a7eb89c51e39cdc5db995b6",
+    "tools/cue-results/aggregate.py": "8ee70eae2ddba6c9f1fdb1147a6af6dd79395be6476672f4dd3f4be659d0392b",
+    "replay/replay_main.c": "10cd537e48746ed18c6a1e894378ed806ebee6879bdc6281ea287e641abe19b8",
+    "replay/json_mini.h": "b8b5ab530898169474a7d642717d3a7a4a62f966cf9441da7adb52a49a5517b7",
+    "kernel/cue_policy.c": "ae7f3873c80dd55f7a878af7a6d6dcf372ed262945e9b1f9591fd8675179c0cb",
+    "kernel/cue_policy.h": "4b9a96e8609ea1399d3dab7725db98474eb6fc6565e779efc619730dbd18baaa"
+  },
+  "compiler": "cc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+  "replay_sha256": "b30cbe2e27c118e19124a6e10cf77480925d5be10441bcf1bdce20380e2309b4",
+  "corpus_digest_sha256": "1181983d086571fd065d3b8fce2f5bd93ed675554bad31ec898718b547bd6ef9",
+  "corpus_digest_method": "SHA-256 of sorted input SHA-256 hex digests joined by newline, including trailing newline; no filenames included",
+  "input_files": 54,
+  "verified_traces": 23,
+  "pico_sidecars": 8,
+  "latency_sidecars": 23,
+  "shadow_totals": {
+    "logged": 11301,
+    "compared": 11300,
+    "uncompared": 1,
+    "decision_mismatches": 0,
+    "reported_orphans": 0
+  },
+  "ablation_tables": [
+    "| Variant | Cues | Lead s min/med/max | In 5\u201320 s window | Top suppressions |",
+    "| --- | --- | --- | --- | --- |",
+    "| baseline | 42 | 12 / 15 / 20 | 42/42 | TOO_SLOW 21,196, TOO_EARLY 6,733, INSIDE_EVENT 1,909 |",
+    "| no_memory | 42 | 12 / 15 / 20 | 42/42 | TOO_SLOW 21,196, TOO_EARLY 6,733, INSIDE_EVENT 1,909 |",
+    "| no_thresholds | 42 | 12 / 15 / 20 | 42/42 | TOO_SLOW 21,196, TOO_EARLY 6,733, INSIDE_EVENT 1,909 |",
+    "| every_zone | 83 | 34 / 226 / 1748 | 0/83 | TOO_SLOW 21,196, ALREADY_CUED 7,589, INSIDE_EVENT 1,899 |",
+    "| distance_gate | 41 | 6 / 19 / 73 | 24/41 | TOO_SLOW 21,196, TOO_EARLY 6,488, INSIDE_EVENT 1,906 |",
+    "| Variant | Changed observation decisions | Changed cue timestamps |",
+    "| --- | --- | --- |",
+    "| baseline | 0 | 0 |",
+    "| no_memory | 16 | 0 |",
+    "| no_thresholds | 0 | 0 |",
+    "| every_zone | 7114 | 125 |",
+    "| distance_gate | 820 | 83 |"
+  ],
+  "aggregate_output": [
+    "== corpus ==",
+    "traces: 23 (19 with motion)",
+    "kernel steps (samples): 57783",
+    "distance_km: 88.1",
+    "HEAD_UP cues: 42",
+    "grades: 33 across 13 rides \u2014 useful=17, false_alarm=0, too_late=7, too_early=2, unrecognized=7",
+    "== watch delivery (latency sidecars) ==",
+    "dispatches: 49, delivered live: 27, queued (undelivered): 22, other undelivered: 0",
+    "watch verdicts among delivered: duplicate=4, play=18, pre-verdict schema=5",
+    "delivery latency ms: n=27 min=25 median=542 max=2890",
+    "== phone<->pico shadow contract (pico sidecars, RFC 0006) ==",
+    "instrumented rides: 8",
+    "steps logged: 11301, shadow-compared: 11300, divergences: 0, orphan reports: 0",
+    "buzzer actuations: 15",
+    "actuation delay us: n=13 min=138 median=147 max=173 (2 early records at ms resolution only)"
+  ],
+  "limitations": [
+    "Raw GPS traces, ride filenames, identifiers and per-ride logs excluded.",
+    "Corpus field origin is caller-declared, not independently established.",
+    "Recorded decision verification is not independent policy correctness or rider safety validation.",
+    "Pico comparisons recomputed from stored fields; physical actuation, firmware identity and orphan counts are not independently remeasured.",
+    "Watch delivery and actuation figures are exported telemetry aggregates, not independent physical-output verification."
+  ]
+}
