@@ -30,6 +30,16 @@ sensor input → feature extraction → local decision → low-latency cue
       → field logging → replayable validation → MCU migration
 ```
 
+## Evidence
+
+| | |
+| --- | --- |
+| **Contribution** | Sole author: decision kernel and equivalence contract, replay harness, phone↔MCU shadow-comparison protocol, trace format, aggregation and ablation tooling, MCU ports. AI-assisted implementation gated by the tests, replay, and hardware-in-the-loop checks described below. Platform SDKs and map data are third-party. |
+| **Status** | Working demonstrator on private hardware. Not a product, not a safety device, no users but the author. |
+| **Evidence** | 23/23 traces replay exactly; 11,301 steps logged, 11,300 compared, 0 divergences across 8 instrumented rides, over a 23-trace/88.1 km/57,783-step corpus recorded 2026-07-20 to 2026-08-08. Re-verified 2026-09-12 against a tree identical to `dd8a7db25522734de1dbec614f66113c69d80dcb`. [Field results](docs/results.md) · [re-verification](docs/field-reverification.md) · [case study](https://www.jasoneplumb.com/case-studies/cue-equivalence-contract.html) |
+| **Reproduction** | The ride corpus is private (NFR-005), so a fresh clone cannot reproduce the field figures. It can run the machinery: `make test`, `make demo-corpus`, then `python3 tools/cue-results/aggregate.py demo-rides` and `python3 tools/cue-ablation/ablate.py demo-rides` over a synthetic, coordinate-free corpus. |
+| **Limitations** | Agreement is consistency, not correctness — three runtimes share one kernel and therefore share its defects. One logged step was never compared. 22 of 49 watch dispatches have no recorded live delivery. Rider grades cover 33 cues from one rider. Ablations are counterfactual replays over fixed trajectories, not measured rider responses. Nothing here measures safety. |
+
 ## Overview
 
 Cyclists need attention cues before road geometry compresses their options. A
@@ -126,7 +136,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow and guidelines.
 
 ## License
 
-Copyright © 2026 Jason E Plumb.
+Copyright © 2026 Jason E. Plumb.
 
 Licensed under the [Apache License 2.0](LICENSE).
 
