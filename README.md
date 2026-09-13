@@ -136,7 +136,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow and guidelines.
 
 ## License
 
-Copyright © 2026 Jason E Plumb.
+Copyright © 2026 Jason E. Plumb.
 
 Licensed under the [Apache License 2.0](LICENSE).
 
