@@ -21,7 +21,7 @@ Raw GPS exports remain private.
 ## The equivalence contract
 
 The same `kernel/cue_policy.c` runs in three places: live on the phone, as
-the MCU actuator (Pico W, RFC 0006), and offline in the replay harness, and
+the MCU actuator (Pico W, RFC 0006), and offline in the replay harness; and
 the contract is that all three agree on the recorded logical decision fields.
 Shared code can also share defects.
 
@@ -51,7 +51,7 @@ missing report is not independently established by this re-verification.
 | --- | --- | --- |
 | `useful` | 17 | |
 | `too_late` | 7 | Drove the §13 `max_notice_s` 15 → 20 widening, which then failed and is on the record in `kernel/cue_policy.h` |
-| `unrecognized` | 7 | A delivery/perceptibility outcome, not a policy one (see [grading-guide.md](grading-guide.md)), moves no policy lever |
+| `unrecognized` | 7 | A delivery/perceptibility outcome, not a policy one (see [grading-guide.md](grading-guide.md)); moves no policy lever |
 | `too_early` | 2 | |
 | `false_alarm` | 0 | |
 
