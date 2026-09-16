@@ -2,10 +2,10 @@
 
 Every figure on this page is aggregated from the operator's local ride
 corpus by
-[`tools/cue-results/aggregate.py`](../tools/cue-results/aggregate.py) — run
+[`tools/cue-results/aggregate.py`](../tools/cue-results/aggregate.py); run
 `python3 tools/cue-results/aggregate.py` from the repo root to reproduce it.
 The corpus itself (`rides/`) is field data and stays out of the repo
-(NFR-005 — it is gitignored), so this page is a dated snapshot, and the
+(NFR-005: it is gitignored), so this page is a dated snapshot, and the
 command reproduces it wherever the corpus lives, not on a fresh clone. For
 a corpus a fresh clone *can* reproduce, `make demo-corpus` generates a
 synthetic, coordinate-free ride set that the same tools consume
@@ -20,14 +20,14 @@ Raw GPS exports remain private.
 
 ## The equivalence contract
 
-The same `kernel/cue_policy.c` runs in three places — live on the phone, as
-the MCU actuator (Pico W, RFC 0006), and offline in the replay harness — and
+The same `kernel/cue_policy.c` runs in three places: live on the phone, as
+the MCU actuator (Pico W, RFC 0006), and offline in the replay harness, and
 the contract is that all three agree on the recorded logical decision fields.
 Shared code can also share defects.
 
 | Contract check | Result |
 | --- | --- |
-| Offline replay of every corpus ride trace (`replay_cli`, NFR-003) | **23/23 traces exit 0** — every recorded decision reproduced exactly |
+| Offline replay of every corpus ride trace (`replay_cli`, NFR-003) | **23/23 traces exit 0**: every recorded decision reproduced exactly |
 | Phone ↔ Pico shadow comparison, per-step, live during rides (RFC 0006 D5) | **11,301 steps logged, 11,300 compared, 0 divergences, 0 orphan reports** across 8 instrumented rides |
 | Pico state-size tripwire (SESSION_ACK `state_size` vs. `static_assert`) | Implemented session-start guard; same-size behavioral drift can pass it |
 
@@ -50,8 +50,8 @@ missing report is not independently established by this re-verification.
 | Grade | Count | Reading |
 | --- | --- | --- |
 | `useful` | 17 | |
-| `too_late` | 7 | Drove the §13 `max_notice_s` 15 → 20 widening — which then failed and is on the record in `kernel/cue_policy.h` |
-| `unrecognized` | 7 | A delivery/perceptibility outcome, not a policy one (see [grading-guide.md](grading-guide.md)) — moves no policy lever |
+| `too_late` | 7 | Drove the §13 `max_notice_s` 15 → 20 widening, which then failed and is on the record in `kernel/cue_policy.h` |
+| `unrecognized` | 7 | A delivery/perceptibility outcome, not a policy one (see [grading-guide.md](grading-guide.md)), moves no policy lever |
 | `too_early` | 2 | |
 | `false_alarm` | 0 | |
 
